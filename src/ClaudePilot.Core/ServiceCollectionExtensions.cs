@@ -1,5 +1,6 @@
 using ClaudePilot.Core.Configuration;
 using ClaudePilot.Core.History;
+using ClaudePilot.Core.Startup;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace ClaudePilot.Core;
@@ -18,6 +19,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton(paths);
         services.AddSingleton<ISettingsStore, JsonSettingsStore>();
         services.AddSingleton<RunHistoryStore>();
+        services.AddHostedService<StartupTasks>();
 
         return services;
     }

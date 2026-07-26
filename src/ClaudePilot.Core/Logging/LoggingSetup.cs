@@ -1,15 +1,23 @@
 using ClaudePilot.Core.Configuration;
 using Serilog;
 using Serilog.Events;
+using Serilog.Formatting.Display;
 
 namespace ClaudePilot.Core.Logging;
 
 /// <summary>
 /// Builds the Serilog pipeline used by every ClaudePilot host. Kept in Core so a future CLI host
-/// logs identically to the desktop app.
+/// logs identically to the desktop app — including the redaction, which is not optional.
 /// </summary>
 public static class LoggingSetup
 {
+    public const string OutputTemplate =
+        "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj}{NewLine}{Exception}";
+
+    /// <summary>The formatter every ClaudePilot sink must use: rendered output, then scrubbed.</summary>
+    public static RedactingTextFormatter CreateFormatter() =>
+        new(new MessageTemplateTextFormatter(OutputTemplate, formatProvider: null));
+
     public static LoggerConfiguration CreateConfiguration(AppPaths paths)
     {
         ArgumentNullException.ThrowIfNull(paths);
@@ -19,11 +27,11 @@ public static class LoggingSetup
             .MinimumLevel.Information()
             .Enrich.FromLogContext()
             .WriteTo.File(
+                formatter: CreateFormatter(),
                 path: paths.LogFileTemplate,
+                restrictedToMinimumLevel: LogEventLevel.Information,
                 rollingInterval: RollingInterval.Day,
                 retainedFileCountLimit: 14,
-                restrictedToMinimumLevel: LogEventLevel.Information,
-                outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj}{NewLine}{Exception}",
                 shared: true);
     }
 

@@ -601,7 +601,10 @@ Single-instance enforcement via a named `Mutex`; a second launch surfaces the ex
       indented settings context would put a record across many lines and break the JSONL contract.
       `UsageSnapshot`/`UsageWindow` from §4.3 landed here too, since `RunRecord.UsageAtStart`
       needs them; the providers that fill them are still Phase 2.
-- [ ] Serilog wired to `logs/`, with token redaction.
+- [x] Serilog wired to `logs/`, with token redaction. Redaction lives in an `ITextFormatter`
+      (`RedactingTextFormatter`), not an enricher — an enricher only sees property values, so a
+      secret inside a message-template literal or an exception message would reach the file
+      unscrubbed. `StartupTasks` (`IHostedService`) loads settings and prunes history on startup.
 - **Acceptance:** unit tests cover round-trip, corrupt-file recovery (backs up and resets to
   defaults rather than crashing), and concurrent-write safety.
 
