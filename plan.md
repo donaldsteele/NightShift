@@ -596,7 +596,11 @@ Single-instance enforcement via a named `Mutex`; a second launch surfaces the ex
 - [x] `JsonSettingsStore` with atomic writes, schema versioning (`SettingsVersion` int), and
       forward-compatible deserialization. Corrupt files are quarantined to `settings.json.bad[-n]`;
       an *unreadable* file (lock, permissions) is left alone and defaults are used for that session.
-- [ ] `RunHistoryStore` (append-only JSONL + per-run log files + pruning).
+- [x] `RunHistoryStore` (append-only JSONL + per-run log files + pruning). Uses a second
+      source-generated context (`ClaudePilotJsonLinesContext`, `WriteIndented = false`) — the
+      indented settings context would put a record across many lines and break the JSONL contract.
+      `UsageSnapshot`/`UsageWindow` from §4.3 landed here too, since `RunRecord.UsageAtStart`
+      needs them; the providers that fill them are still Phase 2.
 - [ ] Serilog wired to `logs/`, with token redaction.
 - **Acceptance:** unit tests cover round-trip, corrupt-file recovery (backs up and resets to
   defaults rather than crashing), and concurrent-write safety.
