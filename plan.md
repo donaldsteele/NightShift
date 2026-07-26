@@ -585,9 +585,17 @@ Single-instance enforcement via a named `Mutex`; a second launch surfaces the ex
 - **Acceptance:** `dotnet build` and `dotnet test` both succeed; an empty Avalonia window shows.
 
 ### Phase 1 — Settings and persistence
-- [ ] `PilotSettings` record with every option in §9.2 and sensible defaults.
-- [ ] `JsonSettingsStore` with atomic writes, schema versioning (`SettingsVersion` int), and
-      forward-compatible deserialization.
+- [x] `PilotSettings` record with every option in §9.2 and sensible defaults.
+      Two decisions worth keeping: (a) properties are `get; set;`, not `get; init;` — the
+      System.Text.Json **source generator turns `init` properties into constructor parameters and
+      passes `default(T)` for anything absent from the JSON**, silently wiping every default when an
+      older settings file is read (`[JsonConstructor]` on a parameterless ctor does *not* change
+      this); (b) the provider order is a `UsageProviderPreference` enum rather than a list, so the
+      record keeps value equality — a collection property would make every `PilotSettings` compare
+      unequal and break settings-change detection in Phase 4.
+- [x] `JsonSettingsStore` with atomic writes, schema versioning (`SettingsVersion` int), and
+      forward-compatible deserialization. Corrupt files are quarantined to `settings.json.bad[-n]`;
+      an *unreadable* file (lock, permissions) is left alone and defaults are used for that session.
 - [ ] `RunHistoryStore` (append-only JSONL + per-run log files + pruning).
 - [ ] Serilog wired to `logs/`, with token redaction.
 - **Acceptance:** unit tests cover round-trip, corrupt-file recovery (backs up and resets to

@@ -15,6 +15,7 @@ public static class ServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(paths);
 
         services.AddSingleton(paths);
+        services.AddSingleton<ISettingsStore, JsonSettingsStore>();
 
         return services;
     }

@@ -4,6 +4,12 @@
     <OutputType>Exe</OutputType>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <!--
+      xUnit1051 wants TestContext.Current.CancellationToken threaded through every awaited call.
+      These tests only touch temp-directory files and finish in milliseconds, so the ceremony buys
+      nothing; warnings-as-errors would otherwise make it fatal.
+    -->
+    <NoWarn>$(NoWarn);xUnit1051</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
