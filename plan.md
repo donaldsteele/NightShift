@@ -34,13 +34,13 @@ A Windows-first (cross-platform-capable) desktop app that babysits a Claude Code
 | Concern | Choice | Notes |
 |---|---|---|
 | Runtime | **.NET 10** (`net10.0`) | `net10.0-windows` only if a Windows-only API is genuinely needed; prefer plain `net10.0`. |
-| UI | **Avalonia UI 12.x** | The 12.x line targets `net10.0`. Run `dotnet package search Avalonia --exact-match` and take the newest stable 12.x (12.0.5 / 12.1.x at time of writing). Use `Avalonia.Themes.Fluent`. |
+| UI | **Avalonia UI 12.1.0** | Newest stable 12.x as of 2026-07-26 (verified with `dotnet package search Avalonia --exact-match`). The `avalonia.mvvm` template already emits 12.1.0 on `net10.0`. Use `Avalonia.Themes.Fluent`. |
 | MVVM | `CommunityToolkit.Mvvm` (source generators) | `[ObservableProperty]`, `[RelayCommand]`. |
 | DI / hosting | `Microsoft.Extensions.Hosting` + `Microsoft.Extensions.DependencyInjection` | Background scheduler as an `IHostedService`. |
 | Logging | `Microsoft.Extensions.Logging` + `Serilog.Sinks.File` | Rolling file in the app data dir. |
 | JSON | `System.Text.Json` with source-generated contexts | Needed for trimming/AOT friendliness later. |
 | Tray icon | Avalonia `TrayIcon` | Built in; no extra dependency. |
-| Tests | `xunit` + `NSubstitute` | |
+| Tests | `xunit.v3` 3.2.2 + `NSubstitute` 6.0.0 | The SDK's `dotnet new xunit` template still emits xunit v2; the csproj is hand-written for v3 (`OutputType=Exe`). |
 
 Create the solution with a `Directory.Build.props` that sets `<Nullable>enable</Nullable>`,
 `<TreatWarningsAsErrors>true</TreatWarningsAsErrors>`, `<ImplicitUsings>enable</ImplicitUsings>`,
@@ -573,11 +573,15 @@ Single-instance enforcement via a named `Mutex`; a second launch surfaces the ex
 ## 10. Phases
 
 ### Phase 0 — Scaffolding
-- [ ] `dotnet new sln -n ClaudePilot`; create `ClaudePilot.Core`, `ClaudePilot.Desktop`
+- [x] `dotnet new sln -n ClaudePilot`; create `ClaudePilot.Core`, `ClaudePilot.Desktop`
       (Avalonia MVVM template), `ClaudePilot.Core.Tests`; wire up `Directory.Build.props`.
-- [ ] Confirm `dotnet --version` reports a .NET 10 SDK; pin it with a `global.json`.
-- [ ] Add all NuGet packages from §2. Verify `dotnet build` is clean with warnings-as-errors.
-- [ ] Set up the generic host in `Program.cs` and register DI for the services in §3.
+- [x] Confirm `dotnet --version` reports a .NET 10 SDK; pin it with a `global.json`.
+      (SDK 10.0.302, `rollForward: latestFeature`.)
+- [x] Add all NuGet packages from §2. Verify `dotnet build` is clean with warnings-as-errors.
+- [x] Set up the generic host in `Program.cs` and register DI for the services in §3.
+      (`AddClaudePilotCore` in `ClaudePilot.Core/ServiceCollectionExtensions.cs` is the single
+      composition entry point; `AppPaths` and `LoggingSetup` landed here since the host needs
+      both before anything else can be registered.)
 - **Acceptance:** `dotnet build` and `dotnet test` both succeed; an empty Avalonia window shows.
 
 ### Phase 1 — Settings and persistence
