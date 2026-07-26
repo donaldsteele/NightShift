@@ -1,4 +1,4 @@
-# ClaudePilot — Implementation Plan
+# NightShift — Implementation Plan
 
 > **For the implementing agent:** This is the authoritative plan. Work top-to-bottom through
 > the phases. After completing each task, tick its checkbox in this file and commit. Never
@@ -51,10 +51,10 @@ Create the solution with a `Directory.Build.props` that sets `<Nullable>enable</
 ## 3. Solution layout
 
 ```
-ClaudePilot.sln
+NightShift.sln
 ├─ Directory.Build.props
 ├─ src/
-│  ├─ ClaudePilot.Core/                 (net10.0, no UI references)
+│  ├─ NightShift.Core/                 (net10.0, no UI references)
 │  │  ├─ Configuration/
 │  │  │   ├─ PilotSettings.cs
 │  │  │   ├─ ISettingsStore.cs
@@ -82,7 +82,7 @@ ClaudePilot.sln
 │  │  │   └─ RunHistoryStore.cs
 │  │  └─ Preflight/
 │  │      └─ PreflightChecker.cs
-│  └─ ClaudePilot.Desktop/              (net10.0, Avalonia)
+│  └─ NightShift.Desktop/              (net10.0, Avalonia)
 │     ├─ App.axaml(.cs)
 │     ├─ Program.cs
 │     ├─ Views/  (MainWindow, DashboardView, SettingsView, HistoryView)
@@ -90,10 +90,10 @@ ClaudePilot.sln
 │     ├─ Controls/ (UsageGauge)
 │     └─ Assets/
 └─ tests/
-   └─ ClaudePilot.Core.Tests/
+   └─ NightShift.Core.Tests/
 ```
 
-`ClaudePilot.Core` must have **zero** Avalonia references so it stays unit-testable and
+`NightShift.Core` must have **zero** Avalonia references so it stays unit-testable and
 reusable by a future CLI/service host.
 
 ---
@@ -329,7 +329,7 @@ Implement `WorkspaceTrustManager` in `Core/Execution/`:
       the backslash form (`Path.GetFullPath(dir)`) and the forward-slash form of the key, and
       also match case-insensitively against existing keys before adding a duplicate. Normalize
       away any trailing separator.
-- [ ] Back up `.claude.json` to `.claude.json.claudepilot.bak` before the first write, and write
+- [ ] Back up `.claude.json` to `.claude.json.nightshift.bak` before the first write, and write
       atomically (temp file + `File.Move(overwrite: true)`). This file holds the user's whole
       Claude Code config — corrupting it is the worst thing this app could do. Unit test the
       round-trip against a fixture with unrelated top-level keys and assert they all survive.
@@ -451,7 +451,7 @@ so the window doesn't open on a trust prompt, and launch with the same permissio
 1. Prefer Windows Terminal:
    `wt.exe -d "<projectDir>" cmd /k "<claudePath>" --permission-mode auto`.
 2. Fall back to `cmd.exe /k` via `UseShellExecute = true` with `WorkingDirectory` set.
-3. Write the prompt to the clipboard **and** to `<projectDir>/.claudepilot/next-prompt.txt`,
+3. Write the prompt to the clipboard **and** to `<projectDir>/.nightshift/next-prompt.txt`,
    then show a toast: "Terminal launched — prompt copied to clipboard." Do not attempt to
    type into the terminal; it is unreliable.
 4. In this mode the app cannot capture output. Record the run as `Launched` with no transcript
@@ -514,13 +514,13 @@ list on the Dashboard with red/amber/green pills.
 
 ## 8. Persistence
 
-App data root: `%APPDATA%\ClaudePilot\` (`Environment.SpecialFolder.ApplicationData`).
+App data root: `%APPDATA%\NightShift\` (`Environment.SpecialFolder.ApplicationData`).
 
 ```
-ClaudePilot/
+NightShift/
 ├─ settings.json            PilotSettings, written atomically (temp file + File.Move)
 ├─ state.json               NextRunAtUtc, last session id, provider health
-├─ logs/claudepilot-.log    Serilog rolling daily
+├─ logs/nightshift-.log    Serilog rolling daily
 └─ runs/
    ├─ index.jsonl           one RunRecord per line, append-only
    └─ <runId>.log           full transcript for that run
@@ -590,7 +590,7 @@ setting: keep last N runs (default 200), prune on startup.
 
 ### 9.4 Tray
 
-`TrayIcon` with tooltip `ClaudePilot — next run in 42m`, icon state reflecting
+`TrayIcon` with tooltip `NightShift — next run in 42m`, icon state reflecting
 idle / running / blocked / paused. Menu: `Show`, `Run now`, `Pause`, `Quit`.
 Closing the window minimizes to tray when "start minimized" is on; `Quit` genuinely exits.
 Single-instance enforcement via a named `Mutex`; a second launch surfaces the existing window.
@@ -600,13 +600,13 @@ Single-instance enforcement via a named `Mutex`; a second launch surfaces the ex
 ## 10. Phases
 
 ### Phase 0 — Scaffolding
-- [x] `dotnet new sln -n ClaudePilot`; create `ClaudePilot.Core`, `ClaudePilot.Desktop`
-      (Avalonia MVVM template), `ClaudePilot.Core.Tests`; wire up `Directory.Build.props`.
+- [x] `dotnet new sln -n NightShift`; create `NightShift.Core`, `NightShift.Desktop`
+      (Avalonia MVVM template), `NightShift.Core.Tests`; wire up `Directory.Build.props`.
 - [x] Confirm `dotnet --version` reports a .NET 10 SDK; pin it with a `global.json`.
       (SDK 10.0.302, `rollForward: latestFeature`.)
 - [x] Add all NuGet packages from §2. Verify `dotnet build` is clean with warnings-as-errors.
 - [x] Set up the generic host in `Program.cs` and register DI for the services in §3.
-      (`AddClaudePilotCore` in `ClaudePilot.Core/ServiceCollectionExtensions.cs` is the single
+      (`AddNightShiftCore` in `NightShift.Core/ServiceCollectionExtensions.cs` is the single
       composition entry point; `AppPaths` and `LoggingSetup` landed here since the host needs
       both before anything else can be registered.)
 - **Acceptance:** `dotnet build` and `dotnet test` both succeed; an empty Avalonia window shows.
@@ -624,7 +624,7 @@ Single-instance enforcement via a named `Mutex`; a second launch surfaces the ex
       forward-compatible deserialization. Corrupt files are quarantined to `settings.json.bad[-n]`;
       an *unreadable* file (lock, permissions) is left alone and defaults are used for that session.
 - [x] `RunHistoryStore` (append-only JSONL + per-run log files + pruning). Uses a second
-      source-generated context (`ClaudePilotJsonLinesContext`, `WriteIndented = false`) — the
+      source-generated context (`NightShiftJsonLinesContext`, `WriteIndented = false`) — the
       indented settings context would put a record across many lines and break the JSONL contract.
       `UsageSnapshot`/`UsageWindow` from §4.3 landed here too, since `RunRecord.UsageAtStart`
       needs them; the providers that fill them are still Phase 2.
