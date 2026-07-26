@@ -1,8 +1,10 @@
+using Microsoft.Extensions.DependencyInjection;
 using NightShift.Core.Configuration;
+using NightShift.Core.Execution;
 using NightShift.Core.History;
+using NightShift.Core.Preflight;
 using NightShift.Core.Startup;
 using NightShift.Core.Usage;
-using Microsoft.Extensions.DependencyInjection;
 
 namespace NightShift.Core;
 
@@ -23,6 +25,7 @@ public static class ServiceCollectionExtensions
         services.AddHostedService<StartupTasks>();
 
         AddUsage(services);
+        AddExecution(services);
 
         return services;
     }
@@ -48,5 +51,27 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IUsageProvider>(sp => sp.GetRequiredService<CcusageProvider>());
 
         services.AddSingleton<CompositeUsageProvider>();
+    }
+
+    /// <summary>
+    /// Launching Claude Code (plan.md §5). Both runners are registered concretely and as
+    /// <see cref="IClaudeRunner"/>; the scheduler picks between them by
+    /// <see cref="Configuration.LaunchMode"/> at run time, because the setting can change without a
+    /// restart.
+    /// </summary>
+    static void AddExecution(IServiceCollection services)
+    {
+        services.AddSingleton<IClaudeExecutableLocator, ClaudeExecutableLocator>();
+        services.AddSingleton<IPromptBuilder, PromptBuilder>();
+        services.AddSingleton<IClaudeProcessLauncher, ClaudeProcessLauncher>();
+        services.AddSingleton<IAutoModeProbeRunner, AutoModeProbeRunner>();
+        services.AddSingleton<AutoModeProbe>();
+        services.AddSingleton<WorkspaceTrustManager>();
+        services.AddSingleton<PermissionsAskScanner>();
+
+        services.AddSingleton<HeadlessClaudeRunner>();
+        services.AddSingleton<TerminalClaudeRunner>();
+        services.AddSingleton<IClaudeRunner>(sp => sp.GetRequiredService<HeadlessClaudeRunner>());
+        services.AddSingleton<IClaudeRunner>(sp => sp.GetRequiredService<TerminalClaudeRunner>());
     }
 }

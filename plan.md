@@ -249,11 +249,32 @@ Default to `Skip` — silently burning quota because a scrape broke is the worst
 2. `claude.cmd` / `claude.exe` / `claude` found on `PATH` (probe `PATHEXT` on Windows).
 3. `%APPDATA%\npm\claude.cmd`, `%LOCALAPPDATA%\Programs\claude\claude.exe`, `~/.local/bin/claude`.
 
-On Windows the npm shim is a `.cmd`, so `ProcessStartInfo` must either target the `.cmd`
-directly with `UseShellExecute = false` (works — .NET resolves it via the shell only if you
-run it through `cmd.exe /c`), or safer: run `cmd.exe /c ""<path>" <args>"`. Implement and unit
-test the argument-quoting helper; do not hand-concatenate arguments — use
-`ProcessStartInfo.ArgumentList` wherever the target is a real executable.
+On Windows the npm shim is a `.cmd`. Implement and unit test the argument-quoting helper; do not
+hand-concatenate arguments — use `ProcessStartInfo.ArgumentList` wherever the target is a real
+executable.
+
+> **Correction (measured on .NET 10 / Windows 11, 2026-07-26).** This section originally called
+> `cmd.exe /c ""<path>" <args>"` the "safer" route. It is the opposite — **launch the `.cmd`
+> directly** with `UseShellExecute = false` and `ArgumentList`, and treat `cmd.exe /c` as a
+> fallback only.
+>
+> Verified with a scratch app plus a generated `.cmd` shim in a directory containing a space:
+> - Direct launch of a `.cmd` starts fine; exit code and redirected stdout both work. Nothing has
+>   to go "via the shell".
+> - Arguments arrive at the batch file with Win32 escaping intact, and `%*` forwards that tail
+>   **verbatim** — observed `RAW=[-p "say \"hi\" 100% C:\work\\"]` — so an npm shim's `node … %*`
+>   re-parses them correctly.
+> - The `cmd.exe /c` route is **lossy**: cmd parses the line before the callee does, so `%VAR%`
+>   expands even inside quotes and `\"` means "literal quote" to the callee but "quoting off" to
+>   cmd. **A prompt containing a double quote cannot survive that route** — and our prompts are
+>   user-editable free text. Batch `%~1` de-quoting does not undo `\"` either; only `%*` forwarding
+>   is faithful.
+>
+> `ProcessArguments.HasCommandShellHazard` flags the characters cmd re-interprets even when quoted
+> (`%`, `!`, `"`, CR, LF) so the fallback route can refuse rather than silently corrupt a prompt.
+>
+> If `ClaudeExecutablePath` is set but the file is gone, fall through to `PATH` (logged, and named
+> in the failure reason) rather than failing every run on a stale setting.
 
 ### 5.2 The prompt
 
@@ -280,9 +301,36 @@ Rules for this session:
 - End your run in a clean state: no half-applied edits, everything committed.
 ```
 
+> ## ⚠ Correction: the slash command MUST be namespaced
+>
+> This section said the prompt begins `/caveman full`. **That is wrong, and it fails silently —
+> the worst way anything in this app can fail.** Measured against Claude Code 2.1.220, 2026-07-26:
+>
+> ```
+> claude -p "/caveman full\n\nReply with exactly: FORM-A-OK"
+>   → result "Unknown command: /caveman",  is_error FALSE, exit code 0
+> claude -p "/caveman:caveman full\n\nReply with exactly: FORM-B-OK"
+>   → result "FORM-B-OK",                  is_error false, exit code 0
+> ```
+>
+> With the unnamespaced form the **entire prompt is swallowed** — nothing runs, no tools are used,
+> no files change — and Claude Code still reports a successful result with exit code 0. The first
+> Phase 3 acceptance run did exactly this: 1 second, $0, zero text deltas, repo untouched, and the
+> run recorded as **Success**. An unattended pilot would burn every scheduled slot all night doing
+> nothing while its history showed clean runs.
+>
+> Plugin commands are registered as `<plugin>:<command>`. The live inventory from `system/init`
+> contains `caveman:caveman`, `caveman:caveman-review`, `caveman:caveman-commit`, … with **no bare
+> alias**. `PromptBuilder.CavemanCommand` is therefore `/caveman:caveman`.
+>
+> Two defences, because a future plugin rename would reintroduce this:
+> 1. `HeadlessClaudeRunner` treats a result beginning "Unknown command:" as a **failed** run, with a
+>    detail naming the likely cause. Pinned by a regression test.
+> 2. `system/init` publishes the available `slash_commands` and `plugins`, so preflight can verify
+>    caveman is present *before* a run rather than discovering it from a wasted night.
+
 Notes:
-- `/caveman full` works in `-p` mode: user-invoked skills and slash commands are expanded from
-  the prompt string before the run starts. The level `full` is the caveman skill's default
+- The level `full` is the caveman skill's default
   ("drop articles, fragments OK, short synonyms") — pass it explicitly anyway so a future
   default change doesn't alter behaviour. Levels are `lite | full | ultra | wenyan-lite |
   wenyan-full | wenyan-ultra`; expose them all in a dropdown, defaulting to `full`.
@@ -299,6 +347,24 @@ Notes:
 > different mechanisms and both must be handled.
 
 #### 5.3.1 Pre-trusting the project folder
+
+> **Correction (measured against Claude Code 2.1.220, 2026-07-26).** This section assumes an
+> untrusted folder stops a run dead. **It does not, in headless mode.** A full
+> `claude -p … --output-format stream-json --permission-mode auto` run in a directory Claude Code
+> had never seen completed normally with stdin closed, exit 0, and added **zero** new keys to
+> `~/.claude.json` (7 project keys before, 7 after). Headless `-p` does not appear to gate on the
+> trust dialog at all on this version.
+>
+> Consequences: `WorkspaceTrustManager` stays — visible-terminal mode (§5.5) does show the dialog,
+> and a future version could reinstate the gate — but trust application is **advisory** and must
+> never fail a run. The `TrustBlocked` detect-and-retry loop below is very likely dead code on
+> 2.1.220; ship the *detector* (`LooksTrustBlocked`) so a runner can log it, not a retry loop
+> around an event we have no evidence occurs. Interactive mode was **not** verified.
+>
+> The other §5.3.1 warning is fully vindicated: the live config on this machine really does carry
+> `C:\code\TrestleBoard` **and** `C:/code/TrestleBoard` as separate keys. Six of seven keys use
+> forward slashes, one uses backslashes — so current Claude Code mostly writes forward-slash keys,
+> and both forms exist in the wild. The dual-write plus case-insensitive matching is load-bearing.
 
 On first use of a directory, Claude Code asks *"Do you trust the files in this folder?"*.
 There is currently **no dedicated flag** to accept only the trust dialog — the feature request
@@ -333,8 +399,14 @@ Implement `WorkspaceTrustManager` in `Core/Execution/`:
       atomically (temp file + `File.Move(overwrite: true)`). This file holds the user's whole
       Claude Code config — corrupting it is the worst thing this app could do. Unit test the
       round-trip against a fixture with unrelated top-level keys and assert they all survive.
-- [ ] Never write to `.claude.json` while a `claude` process is running (the CLI rewrites it on
-      exit and will clobber us). The `RunGate` already serializes runs; take the same gate here.
+- [ ] Never write to `.claude.json` while a `claude` process is running. The `RunGate` already
+      serializes runs; take the same gate here.
+      **Measured 2026-07-26:** the CLI rewrites this file *continuously during a session*, not only
+      on exit — over ~20 minutes of an unrelated live session, `promptQueueUseCount`,
+      `cachedGrowthBookFeatures`, `cachedExperimentData`, `cachedGrowthBookFeaturesAt`,
+      `pluginUsage` and `clientDataCacheSlots` all changed while every `projects` entry and trust
+      flag stayed put. So this is not a tidy-shutdown race we might lose — it is a race we *will*
+      lose. Read-modify-write must happen only when no `claude` process is live.
 
 Trust is applied as a **preflight fix action** ("Trust this folder"), shown to the user with the
 exact path being trusted, and re-verified before every scheduled run in case the CLI rewrote it.
@@ -661,19 +733,40 @@ Single-instance enforcement via a named `Mutex`; a second launch surfaces the ex
   approximate. With both broken, it returns `Unavailable` and does not throw.
 
 ### Phase 3 — Execution
-- [ ] `ClaudeExecutableLocator` + argument-quoting helper (unit tested against nasty paths).
-- [ ] `WorkspaceTrustManager` (§5.3.1): both path-separator key forms, JsonNode round-trip that
-      preserves unknown keys, backup, atomic write, gated against concurrent runs.
-- [ ] Auto-mode availability probe (`claude auto-mode config`) + the permission-mode fallback
-      ladder from §5.3.2, cached with a manual re-probe button.
-- [ ] `permissions.ask` scanner across user and project settings files.
-- [ ] `PromptBuilder` with the template from §5.2 and token substitution.
-- [ ] `StreamJsonParser` — NDJSON, partial-line tolerant, typed events; fixture tests.
-- [ ] `HeadlessClaudeRunner` — spawn, stream, timeout, stall detector, kill-tree, exit-code
-      mapping, `session_id` capture, `plugin_errors` detection, closed stdin, trust
-      detect-and-retry-once.
-- [ ] `TerminalClaudeRunner` — `wt.exe` with `cmd /k` fallback, clipboard + prompt file.
-- [ ] Dry-run mode that logs the exact resolved command line and exits.
+- [x] `ClaudeExecutableLocator` + argument-quoting helper (unit tested against nasty paths).
+      Quoting is round-tripped through the real `CommandLineToArgvW` via P/Invoke, and a generated
+      `.cmd` shim is launched from a directory containing a space. See the §5.1 correction: direct
+      launch is the default, `cmd.exe /c` is the lossy fallback.
+- [x] `WorkspaceTrustManager` (§5.3.1): both path-separator key forms, JsonNode round-trip that
+      preserves unknown keys, backup, atomic write, gated against concurrent runs. Trust is
+      **advisory** — see the §5.3.1 correction; headless runs do not gate on it.
+- [x] Auto-mode availability probe (`claude auto-mode config`) + the permission-mode fallback
+      ladder from §5.3.2, cached with a manual re-probe. Exit code 0 alone is insufficient: an
+      older CLI prints usage for an unknown subcommand and also exits 0, so parseable JSON is
+      required too.
+- [x] `permissions.ask` scanner across user and project settings files.
+- [x] `PromptBuilder` with the template from §5.2 and token substitution — **namespaced command**,
+      see the correction above.
+- [x] `StreamJsonParser` — NDJSON, partial-line tolerant, typed events; fixture tests built from
+      two real captured sessions. Five event kinds this plan never mentioned are now typed:
+      `system/hook_started`, `system/hook_response`, `system/status`, `rate_limit_event`, and
+      `content_block_delta/input_json_delta`.
+- [x] `HeadlessClaudeRunner` — spawn, stream, timeout, stall detector, kill-tree, exit-code
+      mapping, `session_id` capture, caveman-availability detection, closed stdin, and the
+      unknown-slash-command guard. The trust detect-and-retry loop was deliberately **not** built;
+      see §5.3.1.
+- [x] `TerminalClaudeRunner` — `wt.exe` with `cmd /k` fallback, clipboard + prompt file written to
+      `<project>/.nightshift/next-prompt.txt`.
+- [x] Dry-run mode that logs the exact resolved command line and exits, in both runners.
+- **Acceptance met 2026-07-26 (second attempt).** Against a brand-new git repo Claude Code had
+  never opened: no trust dialog, no permission prompt, no hang. 47s, $0.38, exit 0, permission mode
+  `auto` confirmed from `system/init`. `hello.txt` created with the right contents, all three
+  checkboxes ticked, **three separate conventional commits**, working tree clean, and tools
+  `Read, Write, Edit, PowerShell` used — the PowerShell call proves the mode is looser than
+  `acceptEdits`. Transcript captured: 239 lines / 105,584 chars. `~/.claude.json` afterwards: only
+  the expected 4 keys added (2 directories × 2 separator forms), **all 7 pre-existing project
+  entries byte-identical**.
+  The *first* attempt is the more valuable result — it failed, silently, and is written up in §5.2.
 - **Acceptance:** against a **brand-new, never-before-opened** scratch git repo with a trivial
   `plan.md` (e.g. "create hello.txt, then run the tests"), a headless run completes with **zero
   human interaction** — no trust dialog, no permission prompt, no hang. `hello.txt` exists, the
