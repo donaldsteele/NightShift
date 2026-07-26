@@ -122,17 +122,25 @@ public sealed class FakeClaudeProcess : IClaudeProcess
     }
 }
 
-/// <summary>Hands out a prepared <see cref="FakeClaudeProcess"/> and records what it was asked to start.</summary>
-public sealed class FakeClaudeProcessLauncher(FakeClaudeProcess process) : IClaudeProcessLauncher
+/// <summary>
+/// Hands out prepared <see cref="FakeClaudeProcess"/> instances in order and records every start.
+/// Multiple processes let a test drive consecutive runs through one runner, which is how the
+/// scheduler really uses it — the runner is a singleton that carries state between runs.
+/// </summary>
+public sealed class FakeClaudeProcessLauncher(params FakeClaudeProcess[] processes) : IClaudeProcessLauncher
 {
+    readonly Queue<FakeClaudeProcess> _queue = new(processes);
+
     public ClaudeProcessStart? LastStart { get; private set; }
 
-    public int StartCount { get; private set; }
+    public List<ClaudeProcessStart> Starts { get; } = [];
+
+    public int StartCount => Starts.Count;
 
     public IClaudeProcess Start(ClaudeProcessStart start)
     {
         LastStart = start;
-        StartCount++;
-        return process;
+        Starts.Add(start);
+        return _queue.Count > 0 ? _queue.Dequeue() : processes[^1];
     }
 }

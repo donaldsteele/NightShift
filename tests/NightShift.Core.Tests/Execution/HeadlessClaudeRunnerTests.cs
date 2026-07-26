@@ -225,6 +225,87 @@ public sealed class HeadlessClaudeRunnerTests : IDisposable
     }
 
     [Fact]
+    public async Task A_run_cut_short_by_quota_is_recorded_as_RateLimited_with_its_reset_time()
+    {
+        var runner = CreateRunner();
+
+        var task = runner.RunAsync(Settings());
+        _process.EmitStdout(InitLine() + "\n");
+        _process.EmitStdout(
+            "{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"rejected\"," +
+            "\"rateLimitType\":\"five_hour\",\"utilization\":1.0,\"resetsAt\":1785546000}}\n");
+        _process.EmitStdout(ResultLine() + "\n");
+        _process.Exit(0);
+
+        var record = await task;
+
+        Assert.Equal(RunOutcome.RateLimited, record.Outcome);
+        Assert.Equal(new DateTimeOffset(2026, 8, 1, 1, 0, 0, TimeSpan.Zero), record.RateLimitResetsAt);
+        Assert.Contains("Quota returns at", record.SkipDetail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task An_interrupted_session_that_did_work_is_resumed_on_the_next_run()
+    {
+        var runner = CreateRunner();
+
+        // First run: a tool completes, then quota runs out.
+        var first = runner.RunAsync(Settings());
+        _process.EmitStdout(InitLine(sessionId: "sess-interrupted") + "\n");
+        _process.EmitStdout(
+            "{\"type\":\"user\",\"session_id\":\"sess-interrupted\",\"message\":{\"role\":\"user\",\"content\":" +
+            "[{\"type\":\"tool_result\",\"tool_use_id\":\"toolu_1\",\"content\":\"written\"}]}}\n");
+        _process.EmitStdout(
+            "{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"rejected\"," +
+            "\"rateLimitType\":\"five_hour\",\"utilization\":1.0,\"resetsAt\":1785546000}}\n");
+        _process.EmitStdout(
+            "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"sess-interrupted\"," +
+            "\"total_cost_usd\":0.25,\"duration_ms\":1200,\"result\":\"stopped early\"}\n");
+        _process.Exit(0);
+
+        var firstRecord = await first;
+
+        Assert.Equal(RunOutcome.RateLimited, firstRecord.Outcome);
+        Assert.True(firstRecord.IsResumable);
+        Assert.Equal("sess-interrupted", runner.PendingResumeSessionId);
+
+        // Second run on the SAME runner — the scheduler holds one instance across cycles.
+        // --resume must carry the interrupted session even though the strategy is Fresh.
+        var second = await runner.RunAsync(Settings(s => s.ResumeStrategy = ResumeStrategy.Fresh));
+
+        var arguments = _launcher.Starts[^1].Arguments.ToList();
+        var resumeIndex = arguments.IndexOf("--resume");
+
+        Assert.True(resumeIndex >= 0, "the interrupted session must be resumed");
+        Assert.Equal("sess-interrupted", arguments[resumeIndex + 1]);
+
+        // And once a run completes without being cut short, the pending resume is cleared.
+        Assert.Equal(RunOutcome.Success, second.Outcome);
+        Assert.Null(runner.PendingResumeSessionId);
+    }
+
+    [Fact]
+    public async Task A_quota_stop_before_any_work_is_not_marked_resumable()
+    {
+        // Resuming a session that achieved nothing just replays the prompt at extra cost.
+        var runner = CreateRunner();
+
+        var task = runner.RunAsync(Settings());
+        _process.EmitStdout(InitLine() + "\n");
+        _process.EmitStdout(
+            "{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"rejected\"," +
+            "\"rateLimitType\":\"seven_day\",\"utilization\":1.0,\"resetsAt\":1785546000}}\n");
+        _process.EmitStdout(ResultLine() + "\n");
+        _process.Exit(0);
+
+        var record = await task;
+
+        Assert.Equal(RunOutcome.RateLimited, record.Outcome);
+        Assert.False(record.IsResumable);
+        Assert.Null(runner.PendingResumeSessionId);
+    }
+
+    [Fact]
     public async Task Dry_run_never_launches_anything_but_logs_the_command_line()
     {
         var runner = CreateRunner();

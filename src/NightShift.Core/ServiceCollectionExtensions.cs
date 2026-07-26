@@ -3,6 +3,7 @@ using NightShift.Core.Configuration;
 using NightShift.Core.Execution;
 using NightShift.Core.History;
 using NightShift.Core.Preflight;
+using NightShift.Core.Scheduling;
 using NightShift.Core.Startup;
 using NightShift.Core.Usage;
 
@@ -26,6 +27,7 @@ public static class ServiceCollectionExtensions
 
         AddUsage(services);
         AddExecution(services);
+        AddScheduling(services);
 
         return services;
     }
@@ -68,10 +70,26 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<AutoModeProbe>();
         services.AddSingleton<WorkspaceTrustManager>();
         services.AddSingleton<PermissionsAskScanner>();
+        services.AddSingleton<IPreflightProcessRunner, PreflightProcessRunner>();
+        services.AddSingleton<PreflightChecker>();
+        services.AddSingleton<IPreflightChecker>(sp => sp.GetRequiredService<PreflightChecker>());
 
         services.AddSingleton<HeadlessClaudeRunner>();
         services.AddSingleton<TerminalClaudeRunner>();
         services.AddSingleton<IClaudeRunner>(sp => sp.GetRequiredService<HeadlessClaudeRunner>());
         services.AddSingleton<IClaudeRunner>(sp => sp.GetRequiredService<TerminalClaudeRunner>());
+    }
+
+    /// <summary>
+    /// The background scheduler (plan.md §6). Registered both as itself and as the hosted service,
+    /// so the UI can resolve the same instance it is watching — two instances would mean two timers
+    /// and, worse, two run gates.
+    /// </summary>
+    static void AddScheduling(IServiceCollection services)
+    {
+        services.AddSingleton<RunGate>();
+        services.AddSingleton<PilotStateStore>();
+        services.AddSingleton<PilotScheduler>();
+        services.AddHostedService(sp => sp.GetRequiredService<PilotScheduler>());
     }
 }

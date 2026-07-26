@@ -25,7 +25,8 @@ public static class ClaudeArgumentsBuilder
         string prompt,
         PermissionMode effectiveMode,
         string allowedTools,
-        string? resumeSessionId = null)
+        string? resumeSessionId = null,
+        bool forceResume = false)
     {
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentException.ThrowIfNullOrWhiteSpace(prompt);
@@ -62,7 +63,11 @@ public static class ClaudeArgumentsBuilder
             arguments.Add(settings.Model.Trim());
         }
 
-        if (settings.ResumeStrategy == ResumeStrategy.Resume && !string.IsNullOrWhiteSpace(resumeSessionId))
+        // `forceResume` overrides ResumeStrategy.Fresh on purpose: a session interrupted by quota
+        // exhaustion left work half-finished, and "keep context small" was never a request to
+        // abandon it.
+        if ((forceResume || settings.ResumeStrategy == ResumeStrategy.Resume)
+            && !string.IsNullOrWhiteSpace(resumeSessionId))
         {
             arguments.Add("--resume");
             arguments.Add(resumeSessionId.Trim());

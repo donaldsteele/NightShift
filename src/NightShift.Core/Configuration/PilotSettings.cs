@@ -65,6 +65,24 @@ public sealed record PilotSettings
 
     public bool RunOnStartup { get; set; }
 
+    /// <summary>
+    /// Anchor the schedule to quota resets instead of ticking blindly on the interval (plan.md §6).
+    /// </summary>
+    /// <remarks>
+    /// When the usage provider reports when a window rolls over, the next check is pulled forward to
+    /// just after it. A reset is the moment the most quota becomes available, so a tick placed there
+    /// gets the most work done per slot — and when a cycle was blocked by the threshold, it is the
+    /// first moment the pilot can run at all. The interval remains the upper bound: alignment only
+    /// ever moves a check <em>earlier</em>, never later.
+    /// </remarks>
+    public bool AlignToQuotaReset { get; set; } = true;
+
+    /// <summary>
+    /// How long after a reset to wake. Small but non-zero: firing at the exact boundary races the
+    /// server's own clock and reads the window that is about to close.
+    /// </summary>
+    public int QuotaResetGraceMinutes { get; set; } = 1;
+
     public bool StartWithWindows { get; set; }
 
     public bool StartMinimized { get; set; }
@@ -141,6 +159,7 @@ public sealed record PilotSettings
         ThresholdPercent = Math.Clamp(ThresholdPercent, MinThresholdPercent, MaxThresholdPercent),
         MaxRunDurationMinutes = Math.Max(1, MaxRunDurationMinutes),
         StallTimeoutMinutes = Math.Max(1, StallTimeoutMinutes),
+        QuotaResetGraceMinutes = Math.Clamp(QuotaResetGraceMinutes, 0, 60),
         AllowedTools = string.IsNullOrWhiteSpace(AllowedTools) ? DefaultAllowedTools : AllowedTools.Trim(),
         PromptTemplate = string.IsNullOrWhiteSpace(PromptTemplate) ? DefaultPromptTemplate : PromptTemplate,
         HistoryRetentionCount = Math.Max(1, HistoryRetentionCount),

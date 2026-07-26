@@ -537,8 +537,33 @@ Make the mode a per-project setting with a radio group in the UI, exactly as spe
 
 `PilotScheduler : BackgroundService`.
 
-- Uses `PeriodicTimer` with `TimeSpan.FromMinutes(settings.IntervalMinutes)` (default 60,
-  range 5–1440). Recreate the timer when the interval setting changes.
+- Uses `TimeSpan.FromMinutes(settings.IntervalMinutes)` (default 60, range 5–1440) as the **upper
+  bound** between checks, not as a metronome.
+
+> **Refinement: the schedule anchors itself to quota resets.**
+> The interval alone is blind — it can park a check in the middle of a window and leave the pilot
+> idle across the moment its quota came back. Every usage snapshot carries `resets_at` for the
+> windows it reports, so the next check is placed at:
+>
+> ```
+> next = min(now + interval, earliest known future reset + QuotaResetGraceMinutes)
+> ```
+>
+> Alignment only ever moves a check **earlier** — a reset four hours out never delays the ordinary
+> cadence. Rules:
+> - When a cycle was blocked by the threshold, the **blocking window's** reset is the anchor, not
+>   the earliest reset overall: waking when some other window rolls over would only produce another
+>   skip.
+> - The anchor is read at startup too, so the first interval after a restart is not blind.
+> - `QuotaResetGraceMinutes` (default 1, clamped 0–60) keeps the wake just clear of the boundary;
+>   firing exactly on it races the server's clock and reads the window that is about to close.
+> - Reset timestamps are absolute, so a snapshot stays useful for anchoring long after it was taken
+>   — including across a run that outlasted the window.
+> - `AlignToQuotaReset` (default on) turns the whole behaviour off for anyone who wants a strict
+>   metronome.
+>
+> Manual `Run now` / `Force run` never reschedule: a user action must not silently reprogram the
+> cadence.
 - Persists `NextRunAtUtc` to disk on every tick so a restart doesn't reset the cadence. On
   startup: if `NextRunAtUtc` is in the past, run a tick immediately (subject to `RunOnStartup`,
   default `false`).
@@ -553,6 +578,41 @@ Make the mode a per-project setting with a radio group in the UI, exactly as spe
   6. Otherwise → `Run`.
 - `RunGate` is a `SemaphoreSlim(1,1)`; a run that outlasts the interval simply causes the next
   tick to skip with `AlreadyRunning`. Never queue up runs.
+
+### 6.1 Running out of quota *mid-task*
+
+The §4.3 gate only asks whether there is quota **before** a run. The harder case is a run that
+starts healthy, works for twenty minutes, and then hits the wall partway through an item. Handled
+as its own outcome, `RunOutcome.RateLimited`, because nothing is broken — the window is simply spent.
+
+**Detection** (`RateLimitDetector`), strongest signal first:
+1. `rate_limit_event` whose `status` is not one of `allowed`/`allowed_warning`/`ok`, or whose
+   utilization has reached 100%. This also carries `resetsAt`, which is the useful part.
+2. `api_error_status` containing `429` on the final `result`.
+3. Claude Code's own usage-limit sentence in the `result` text or on stderr.
+
+> **False positives are a live hazard, not a hypothetical one.** This plan discusses rate limits on
+> nearly every page, so a NightShift run against its own repo produces assistant prose, commit
+> messages and diffs full of the words "rate limit", "429" and "usage limit". Matching a bare
+> substring would mark healthy runs as quota-blocked and stall the pilot for hours. Detection
+> therefore never inspects assistant message text — that is the model talking, not the CLI
+> reporting — and the prose pattern is anchored to the whole sentence. A test suite of realistic
+> NightShift commit messages pins this.
+
+**Recovery:**
+- `RunRecord` gains `RateLimitResetsAt` and `IsResumable`.
+- The scheduler waits: `next = RateLimitResetsAt + QuotaResetGraceMinutes`. This is the **one** case
+  where a check may be pushed *later* than the interval — the run itself is hard evidence the window
+  is spent, so ticking hourly against it would only produce a queue of skips. With no reported reset
+  time it falls back to the interval rather than retrying straight into the wall.
+- **The interrupted session is resumed, not restarted.** `--resume <session_id>` is passed on the
+  next cycle even when `ResumeStrategy` is `Fresh`: choosing "keep context small" was never a
+  request to abandon half-finished work. Only sessions that actually completed a tool call are
+  resumable — resuming one that achieved nothing just replays the prompt at extra cost.
+- Both the pending session and the quota deadline are persisted to `state.json`. A five-hour window
+  that ran out at midnight is not back until morning, and the machine may well be restarted in
+  between; on startup the pilot restores the pending resume and refuses to launch until the quota is
+  actually back, even when `RunOnStartup` is set.
 - Expose `RunNowCommand` that bypasses the interval but **still honours the usage check**,
   plus `ForceRunCommand` (shift-click / explicit menu item) that bypasses the usage check with
   a confirmation dialog.
@@ -776,9 +836,16 @@ Single-instance enforcement via a named `Mutex`; a second launch surfaces the ex
   mode opens a real window in the right directory with no trust prompt.
 
 ### Phase 4 — Scheduler
-- [ ] `PilotScheduler` background service, `RunGate`, `CycleDecision`, persisted `NextRunAtUtc`.
-- [ ] Reset-aware rescheduling when blocked by the threshold.
-- [ ] `PreflightChecker` with all checks and fix actions from §7.
+- [x] `PilotScheduler` background service, `RunGate`, `CycleDecision`, persisted `NextRunAtUtc`.
+- [x] Reset-aware rescheduling — generalised beyond "when blocked" into the anchoring rule in §6.
+- [x] Mid-run quota exhaustion: `RateLimitDetector`, `RunOutcome.RateLimited`, wait-for-reset and
+      resume-the-interrupted-session (§6.1).
+- [x] `PreflightChecker` with all checks and fix actions from §7, behind `IPreflightChecker` so the
+      scheduler's gate is testable. Fix actions are **data**, not delegates — Core has no UI.
+- **Acceptance met.** A stubbed provider driven through `20, 45, 95, 91, 30, 10` across six
+  scheduled ticks produces the right run/skip decision every time and only four launches; a
+  blocking run makes the next tick skip with `AlreadyRunning` rather than queueing; and the
+  schedule, the pending resume and the quota deadline all survive a restart.
 - **Acceptance:** with the interval set to 1 minute and a stubbed usage provider, the log shows
   correct run/skip decisions across ≥5 ticks; a long-running fake run causes `AlreadyRunning`
   skips rather than concurrent launches; restarting the app preserves the schedule.

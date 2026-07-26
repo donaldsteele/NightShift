@@ -15,6 +15,13 @@ public enum RunOutcome
 
     /// <summary>Visible-terminal mode: the process was started but its result is unobservable.</summary>
     Launched,
+
+    /// <summary>
+    /// The run was cut short by the subscription's quota, partway through its work. Distinct from
+    /// <see cref="Failed"/> because nothing is wrong — the pilot simply has to wait for the window
+    /// to roll over, and should resume the same session when it does.
+    /// </summary>
+    RateLimited,
 }
 
 /// <summary>Why a cycle did not launch Claude (plan.md §6).</summary>
@@ -68,6 +75,18 @@ public sealed record RunRecord
     public PermissionMode? PermissionModeUsed { get; set; }
 
     public string? TranscriptPath { get; set; }
+
+    /// <summary>
+    /// When the exhausted quota window rolls over, for <see cref="RunOutcome.RateLimited"/> runs.
+    /// The scheduler waits for this rather than burning cycles against a quota that has not returned.
+    /// </summary>
+    public DateTimeOffset? RateLimitResetsAt { get; set; }
+
+    /// <summary>
+    /// Set when the run stopped mid-task and its session can be continued. The next cycle resumes
+    /// this session instead of starting cold, so partly-finished work is picked up where it stopped.
+    /// </summary>
+    public bool IsResumable { get; set; }
 
     /// <summary>Last assistant text, truncated. Set via <see cref="WithSummary"/>.</summary>
     public string? Summary { get; set; }

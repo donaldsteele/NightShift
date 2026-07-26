@@ -70,6 +70,29 @@ public static class UsageMetricSelector
         return earliest;
     }
 
+    /// <summary>
+    /// The soonest window reset still in the future, whatever its utilization. This is what the
+    /// scheduler anchors to: a window rolling over is the moment the most quota becomes available,
+    /// so a tick placed just after it does the most work per slot.
+    /// </summary>
+    public static DateTimeOffset? EarliestFutureReset(UsageSnapshot snapshot, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+
+        DateTimeOffset? earliest = null;
+        foreach (var window in Windows(snapshot))
+        {
+            if (window is { ResetsAt: { } resetsAt }
+                && resetsAt > now
+                && (earliest is null || resetsAt < earliest))
+            {
+                earliest = resetsAt;
+            }
+        }
+
+        return earliest;
+    }
+
     static IEnumerable<UsageWindow?> Windows(UsageSnapshot snapshot)
     {
         yield return snapshot.FiveHour;

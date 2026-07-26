@@ -54,6 +54,20 @@ public sealed class HeadlessClaudeRunner : IClaudeRunner
     /// <summary>Session id of the last run, for <see cref="ResumeStrategy.Resume"/>.</summary>
     public string? LastSessionId { get; private set; }
 
+    /// <summary>
+    /// A session that stopped mid-task — quota ran out, or the run hit a deadline — and should be
+    /// continued on the next cycle whatever <see cref="ResumeStrategy"/> says. Cleared once a run
+    /// finishes without being cut short.
+    /// </summary>
+    public string? PendingResumeSessionId { get; private set; }
+
+    /// <summary>
+    /// Restores a pending resume across an app restart. The scheduler calls this from persisted
+    /// state, because a quota block often outlives the process that hit it.
+    /// </summary>
+    public void RestorePendingResume(string? sessionId) =>
+        PendingResumeSessionId = string.IsNullOrWhiteSpace(sessionId) ? null : sessionId;
+
     public async Task<RunRecord> RunAsync(
         PilotSettings settings,
         IProgress<RunProgress>? progress = null,
@@ -96,12 +110,21 @@ public sealed class HeadlessClaudeRunner : IClaudeRunner
         }
 
         var prompt = _promptBuilder.Build(settings);
+        var resumeInterrupted = PendingResumeSessionId is { Length: > 0 };
+        if (resumeInterrupted)
+        {
+            _logger.LogInformation(
+                "Resuming session {SessionId}, which was cut short mid-task.",
+                PendingResumeSessionId);
+        }
+
         var arguments = ClaudeArgumentsBuilder.Build(
             settings,
             prompt,
             decision.Effective,
             decision.AllowedTools,
-            LastSessionId);
+            PendingResumeSessionId ?? LastSessionId,
+            forceResume: resumeInterrupted);
 
         var start = new ClaudeProcessStart(resolution.ExecutablePath, arguments, settings.ProjectDirectory);
 
@@ -289,6 +312,12 @@ public sealed class HeadlessClaudeRunner : IClaudeRunner
                     rateLimit.Status);
                 break;
 
+            case ClaudeToolResultEvent:
+                // Any completed tool call means real work landed on disk, so an interrupted session
+                // is worth resuming rather than restarting from scratch.
+                state.DidWork = true;
+                break;
+
             case ClaudeApiRetryEvent retry:
                 _logger.LogInformation("Run {RunId}: Claude is retrying (attempt {Attempt}).", runId, retry.Attempt);
                 break;
@@ -297,6 +326,8 @@ public sealed class HeadlessClaudeRunner : IClaudeRunner
                 _logger.LogWarning("Run {RunId}: hook {Hook} failed with exit {ExitCode}.", runId, hook.HookName, hook.ExitCode);
                 break;
         }
+
+        state.RateLimit.Observe(streamEvent);
 
         await _history.AppendTranscriptAsync(runId, streamEvent.RawLine + Environment.NewLine, cancellationToken)
             .ConfigureAwait(false);
@@ -349,6 +380,7 @@ public sealed class HeadlessClaudeRunner : IClaudeRunner
                 if (!string.IsNullOrWhiteSpace(line))
                 {
                     state.StandardError.Add(line);
+                    state.RateLimit.ObserveStandardError(line);
                     _logger.LogDebug("claude stderr: {Line}", line);
                 }
             }
@@ -374,10 +406,15 @@ public sealed class HeadlessClaudeRunner : IClaudeRunner
         var unknownCommand = state.Result?.ResultText is { } text
             && text.StartsWith(UnknownCommandPrefix, StringComparison.OrdinalIgnoreCase);
 
+        var rateLimit = state.RateLimit.Encounter;
+
         var outcome = killReason switch
         {
             KillReason.Stalled or KillReason.MaxDuration => RunOutcome.TimedOut,
             KillReason.Cancelled => RunOutcome.Failed,
+            // Quota exhaustion is checked before is_error and the exit code, because Claude Code
+            // signals it through both and it is not a fault: nothing is broken, the window is spent.
+            _ when rateLimit is not null => RunOutcome.RateLimited,
             _ when state.Result is { IsError: true } => RunOutcome.Failed,
             _ when unknownCommand => RunOutcome.Failed,
             _ when exitCode == 0 => RunOutcome.Success,
@@ -389,6 +426,7 @@ public sealed class HeadlessClaudeRunner : IClaudeRunner
             KillReason.Stalled => "Stalled: no stream events within the stall timeout.",
             KillReason.MaxDuration => "Exceeded the maximum run duration.",
             KillReason.Cancelled => "Cancelled.",
+            _ when rateLimit is not null => BuildRateLimitDetail(rateLimit, state),
             _ when unknownCommand =>
                 $"Claude Code did not recognise a slash command in the prompt ({state.Result?.ResultText}). " +
                 "The prompt was swallowed and nothing ran. Check the caveman plugin is installed and " +
@@ -417,9 +455,18 @@ public sealed class HeadlessClaudeRunner : IClaudeRunner
             ExitCode = exitCode,
             PermissionModeUsed = state.PermissionModeUsed ?? decision.Effective,
             TranscriptPath = transcriptPath,
+            RateLimitResetsAt = rateLimit?.ResetsAt ?? state.RateLimit.LastKnownResetsAt,
+
+            // Worth resuming only if the session got far enough to have done something and we know
+            // which session to continue. Resuming a session that never started just replays the
+            // prompt at extra cost.
+            IsResumable = outcome is RunOutcome.RateLimited or RunOutcome.TimedOut
+                && state.SessionId is { Length: > 0 }
+                && state.DidWork,
         }).WithSummary(summary);
 
         LastSessionId = state.SessionId ?? LastSessionId;
+        PendingResumeSessionId = finished.IsResumable ? finished.SessionId : null;
 
         _logger.LogInformation(
             "Run {RunId} finished: {Outcome} (exit {ExitCode}, {Cost:0.####} USD, mode {Mode}).",
@@ -446,6 +493,23 @@ public sealed class HeadlessClaudeRunner : IClaudeRunner
 
         await _history.AppendAsync(failed).ConfigureAwait(false);
         return failed;
+    }
+
+    static string BuildRateLimitDetail(RateLimitEncounter encounter, RunState state)
+    {
+        var detail = encounter.Detail;
+
+        if (encounter.ResetsAt is { } resetsAt)
+        {
+            return $"{detail} Quota returns at {resetsAt:u}.";
+        }
+
+        // No structured reset time: keep the CLI's own wording rather than guessing a wall clock in
+        // an unstated timezone.
+        var hint = RateLimitDetector.ExtractResetHint(state.Result?.ResultText)
+            ?? RateLimitDetector.ExtractResetHint(state.StandardError.LastOrDefault());
+
+        return hint is null ? detail : $"{detail} Claude said it resets at {hint}.";
     }
 
     static async Task SafeAwait(Task task)
@@ -490,6 +554,11 @@ public sealed class HeadlessClaudeRunner : IClaudeRunner
         public string? LastAssistantText { get; set; }
 
         public ClaudeResultEvent? Result { get; set; }
+
+        /// <summary>True once a tool call completed, i.e. the session produced real work.</summary>
+        public bool DidWork { get; set; }
+
+        public RateLimitDetector RateLimit { get; } = new();
 
         public List<string> StandardError { get; } = [];
 
