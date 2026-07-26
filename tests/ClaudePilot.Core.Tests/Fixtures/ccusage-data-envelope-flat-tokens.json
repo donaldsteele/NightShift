@@ -1,0 +1,26 @@
+{
+  "type": "blocks",
+  "data": [
+    {
+      "id": "2026-07-26T13:30:00.000Z",
+      "startTime": "2026-07-26T13:30:00.000Z",
+      "endTime": "2026-07-26T18:30:00.000Z",
+      "isActive": true,
+      "isGap": false,
+      "inputTokens": 20000,
+      "outputTokens": 10000,
+      "cacheCreationInputTokens": 15000,
+      "cacheReadInputTokens": 5000,
+      "costUSD": 2.11,
+      "models": [
+        "claude-sonnet-4-20250514"
+      ]
+    }
+  ],
+  "summary": {
+    "totalCost": 2.11,
+    "totalTokens": 50000,
+    "tokenLimit": 100000,
+    "blockCount": 1
+  }
+}

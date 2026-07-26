@@ -1,0 +1,28 @@
+{
+  "blocks": [
+    {
+      "id": "2026-07-26T06:00:00.000Z",
+      "startTime": "2026-07-26T06:00:00.000Z",
+      "endTime": "2026-07-26T11:00:00.000Z",
+      "isActive": false,
+      "isGap": false,
+      "inputTokens": 1000,
+      "outputTokens": 500,
+      "totalTokens": 1500
+    },
+    {
+      "id": "2026-07-26T11:15:00.000Z",
+      "startTime": "2026-07-26T11:15:00.000Z",
+      "endTime": "2026-07-26T16:15:00.000Z",
+      "isActive": true,
+      "isGap": false,
+      "inputTokens": 25000,
+      "outputTokens": 5000,
+      "cacheCreationInputTokens": 20000,
+      "cacheReadInputTokens": 10000,
+      "totalTokens": 60000,
+      "costUSD": 3.05
+    }
+  ],
+  "tokenLimit": 400000
+}

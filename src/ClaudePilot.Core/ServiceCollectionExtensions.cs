@@ -1,6 +1,7 @@
 using ClaudePilot.Core.Configuration;
 using ClaudePilot.Core.History;
 using ClaudePilot.Core.Startup;
+using ClaudePilot.Core.Usage;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace ClaudePilot.Core;
@@ -21,6 +22,31 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<RunHistoryStore>();
         services.AddHostedService<StartupTasks>();
 
+        AddUsage(services);
+
         return services;
+    }
+
+    /// <summary>
+    /// Usage detection (plan.md §4). Both concrete providers are registered as
+    /// <see cref="IUsageProvider"/> so <see cref="CompositeUsageProvider"/> receives them; the
+    /// composite itself is resolved by its own type, because injecting it as an
+    /// <see cref="IUsageProvider"/> would make it a member of its own provider list.
+    /// </summary>
+    static void AddUsage(IServiceCollection services)
+    {
+        services.AddSingleton<IClaudeCredentialReader, ClaudeCredentialReader>();
+        services.AddSingleton<IClaudeVersionProvider, ClaudeVersionProvider>();
+        services.AddSingleton<ICcusageProcessRunner, CcusageProcessRunner>();
+
+        // A named client keeps the OAuth calls on their own handler lifetime; the endpoint is
+        // undocumented and rate-limited, so it must never share a pool with anything chatty.
+        services.AddHttpClient<OAuthUsageProvider>();
+
+        services.AddSingleton<IUsageProvider>(sp => sp.GetRequiredService<OAuthUsageProvider>());
+        services.AddSingleton<CcusageProvider>();
+        services.AddSingleton<IUsageProvider>(sp => sp.GetRequiredService<CcusageProvider>());
+
+        services.AddSingleton<CompositeUsageProvider>();
     }
 }

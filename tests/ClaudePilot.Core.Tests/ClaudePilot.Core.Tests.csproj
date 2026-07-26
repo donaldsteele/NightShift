@@ -27,4 +27,12 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <!--
+    Real-world ccusage payloads (plan.md §4.2). They are loaded from disk rather than embedded as
+    string literals so the exact bytes a real `ccusage` JSON run emits can be pasted in verbatim.
+  -->
+  <ItemGroup>
+    <Content Include="Fixtures\**\*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

@@ -1,0 +1,18 @@
+{
+  "blocks": [
+    {
+      "id": "2026-07-26T12:00:00.000Z",
+      "startTime": "2026-07-26T12:00:00.000Z",
+      "endTime": "2026-07-26T17:00:00.000Z",
+      "isActive": true,
+      "isGap": false,
+      "tokenCounts": {
+        "inputTokens": 40000,
+        "outputTokens": 10000,
+        "cacheCreationInputTokens": 20000,
+        "cacheReadInputTokens": 30000
+      },
+      "costUSD": 4.32
+    }
+  ]
+}

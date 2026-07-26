@@ -1,0 +1,29 @@
+{
+  "blocks": [
+    {
+      "id": "2026-07-25T20:00:00.000Z",
+      "startTime": "2026-07-25T20:00:00.000Z",
+      "endTime": "2026-07-26T01:00:00.000Z",
+      "isActive": false,
+      "isGap": false,
+      "tokenCounts": {
+        "inputTokens": 5000,
+        "outputTokens": 2500
+      },
+      "tokenLimitStatus": {
+        "limit": 400000
+      }
+    },
+    {
+      "id": "2026-07-26T01:00:00.000Z",
+      "startTime": "2026-07-26T01:00:00.000Z",
+      "endTime": "2026-07-26T09:00:00.000Z",
+      "isActive": false,
+      "isGap": true,
+      "tokenCounts": {
+        "inputTokens": 0,
+        "outputTokens": 0
+      }
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "blocks": [
+    {
+      "id": "2026-07-26T12:00:00.000Z",
+      "startTime": "2026-07-26T12:00:00.000Z",
+      "endTime": "2026-07-26T17:00:00.000Z",
+      "actualEndTime": "2026-07-26T14:32:11.000Z",
+      "isActive": true,
+      "isGap": false,
+      "entries": 412,
+      "tokenCounts": {
+        "inputTokens": 40000,
+        "outputTokens": 10000,
+        "cacheCreationInputTokens": 20000,
+        "cacheReadInputTokens": 30000
+      },
+      "costUSD": 4.32,
+      "models": [
+        "claude-opus-4-20250514",
+        "claude-sonnet-4-20250514"
+      ],
+      "burnRate": {
+        "tokensPerMinute": 543.2,
+        "costPerHour": 1.7
+      },
+      "projection": {
+        "totalTokens": 190000,
+        "totalCost": 9.9,
+        "remainingMinutes": 148
+      },
+      "tokenLimitStatus": {
+        "limit": 400000,
+        "projectedUsage": 190000,
+        "status": "ok"
+      },
+      "someFieldWeHaveNeverSeen": { "nested": true }
+    }
+  ]
+}

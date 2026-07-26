@@ -128,7 +128,17 @@ Response shape:
 }
 ```
 
-`utilization` is a percentage 0–100. Any window object may be `null` — handle that as 0.
+`utilization` is a percentage 0–100. Any window object may be `null`.
+
+> **Correction (verified 2026-07-26).** An earlier version of this plan said to treat a null window
+> as **0**. That is wrong and dangerous: 0 reads to the §4.3 threshold check as "plenty of quota
+> left", so a provider hiccup would start a run instead of skipping one — the exact failure mode
+> §11.2 exists to prevent. A missing window is modelled as a **null `UsageWindow`**, and
+> `UsageMetricSelector` returns null (⇒ *unavailable* ⇒ `OnUsageUnavailable`, default Skip).
+> A 200 response whose windows are *all* absent is likewise reported as unavailable.
+>
+> Live response for a Max subscription, for reference: `five_hour` and `seven_day` present,
+> `seven_day_opus` and `seven_day_sonnet` both `null`.
 
 **Credentials.** On **Windows and Linux**, read `%USERPROFILE%\.claude\.credentials.json`
 (`~/.claude/.credentials.json`), field `claudeAiOauth.accessToken`. There is also
@@ -160,8 +170,25 @@ if that fails.
 quota, so it can only produce a percentage when you give it a token budget.
 
 ```
-npx ccusage@latest blocks --active --json --token-limit max
+npx ccusage@latest blocks --json --token-limit max
 ```
+
+> **Correction (verified against ccusage 20.0.18, 2026-07-26).** This plan originally specified
+> `blocks --active --json --token-limit max`. That combination is silently broken: `max` means
+> "the highest previously observed block", so it needs the full block history to resolve, and
+> `--active` filters that history away. ccusage then emits **no `tokenLimitStatus` and no
+> `tokenLimit` at all** — no error, just a missing field — so no percentage can be derived and the
+> whole fallback path is dead. Drop `--active` and pick the active block out of the array
+> ourselves (the parser already scans for `isActive: true`). An explicit numeric
+> `--token-limit 500000` *does* survive `--active`, so a user override may legitimately use both.
+>
+> Prefer ccusage's own `tokenLimitStatus.percentUsed` when present; recompute from token counts
+> only when it is absent. The two differ — ccusage's figure accounts for projected usage.
+>
+> **How far off "approximate" really is:** on the same 5-hour window, the OAuth endpoint reported
+> **14%** while ccusage reported **41.18%**. Treating the ccusage number as a quota percentage
+> would skip runs for most of a night that had 86% of its session quota free. The "approximate"
+> chip in §9.1 is not cosmetic.
 
 Relevant flags: `--active` (current 5-hour window only), `--json`, `--token-limit <n|max>`
 (`max` = your highest previously observed block, used as the implied ceiling),
@@ -609,12 +636,26 @@ Single-instance enforcement via a named `Mutex`; a second launch surfaces the ex
   defaults rather than crashing), and concurrent-write safety.
 
 ### Phase 2 — Usage providers
-- [ ] `ClaudeCredentialReader` (Windows/Linux file, macOS keychain shell-out), with expiry check.
-- [ ] `OAuthUsageProvider` with the exact headers from §4.1, 60s cache, 401/429 handling,
-      exponential backoff.
-- [ ] `CcusageProvider` tolerating both documented JSON envelope shapes.
-- [ ] `CompositeUsageProvider` with health tracking and provider-order setting.
-- [ ] Fixture-based unit tests for every parse path, including `null` windows and unknown fields.
+- [x] `ClaudeCredentialReader` (Windows/Linux file, macOS keychain shell-out), with expiry check.
+      Real file also carries `refreshToken`, `refreshTokenExpiresAt`, `scopes`, `subscriptionType`
+      and `rateLimitTier` — the last two are worth surfacing in the UI later.
+- [x] `OAuthUsageProvider` with the exact headers from §4.1, 60s cache, 401/429 handling,
+      exponential backoff. The mandated `Content-Type` header cannot be set on a bodyless GET in
+      .NET, so the request carries an empty `ByteArrayContent` to hold it. The 401 latch is keyed to
+      a SHA-256 fingerprint of the token (never the token), so re-authenticating clears it without
+      an app restart.
+- [x] `CcusageProvider` tolerating both documented JSON envelope shapes — and the command itself
+      corrected, see the §4.2 note.
+- [x] `CompositeUsageProvider` with health tracking and provider-order setting. Provider order is
+      the `UsageProviderPreference` enum from Phase 1; a provider that throws is contained and the
+      next one still runs, because "no usage" already has a safe defined behaviour.
+- [x] Fixture-based unit tests for every parse path, including `null` windows and unknown fields.
+      Two fixtures are captured from a real ccusage 20.0.18 run rather than derived from this plan.
+- [x] `UsageMetricSelector` — the §4.3 metric selection and the "earliest reset at or above the
+      threshold" helper the scheduler needs in Phase 4.
+- **Acceptance met 2026-07-26** against a live login: OAuth reported 5h 14% / 7d 37%; with
+  credentials removed it fell back to ccusage (41.18%, marked approximate); with both broken it
+  returned `Unavailable` carrying both reasons and threw nothing.
 - **Acceptance:** with a valid local Claude login, a console harness prints real 5h/7d
   percentages. With credentials removed, it falls back to ccusage and marks the result
   approximate. With both broken, it returns `Unavailable` and does not throw.
