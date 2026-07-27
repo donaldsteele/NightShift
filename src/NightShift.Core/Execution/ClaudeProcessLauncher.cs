@@ -91,6 +91,8 @@ public sealed class ClaudeProcessLauncher : IClaudeProcessLauncher, IDisposable
             startInfo.ArgumentList.Add(argument);
         }
 
+        ScrubInheritedSessionMarkers(startInfo);
+
         var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         process.Start();
 
@@ -106,6 +108,48 @@ public sealed class ClaudeProcessLauncher : IClaudeProcessLauncher, IDisposable
 
         return new SystemClaudeProcess(process);
     }
+
+    /// <summary>
+    /// Removes the environment markers a parent Claude Code session leaves behind, so the run we
+    /// launch is a session in its own right.
+    /// </summary>
+    /// <remarks>
+    /// If NightShift is started from inside a Claude Code session — which is exactly how it gets
+    /// developed and tested — the child process inherits that session's variables. Observed
+    /// consequence: a spawned run reported <i>"Transcript saving is off — inherited
+    /// CLAUDE_CODE_CHILD_SESSION marker"</i> and silently stopped persisting its transcript, which is
+    /// the one artefact an unattended run exists to leave behind.
+    /// <para>
+    /// Only the session-identity markers are cleared. <c>CLAUDE_CONFIG_DIR</c> and anything else the
+    /// user set deliberately are left alone — this removes an accident of parentage, not the user's
+    /// configuration.
+    /// </para>
+    /// </remarks>
+    internal static void ScrubInheritedSessionMarkers(ProcessStartInfo startInfo)
+    {
+        foreach (var name in InheritedSessionMarkers)
+        {
+            if (Environment.GetEnvironmentVariable(name) is not null)
+            {
+                // Setting it to null in the child's environment block removes it.
+                startInfo.Environment[name] = null;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Variables that identify the *parent* session. Observed on a live Claude Code session,
+    /// 2026-07-27.
+    /// </summary>
+    static readonly string[] InheritedSessionMarkers =
+    [
+        "CLAUDE_CODE_CHILD_SESSION",
+        "CLAUDE_CODE_SESSION_ID",
+        "CLAUDE_CODE_BRIDGE_SESSION_ID",
+        "CLAUDE_CODE_ENTRYPOINT",
+        "CLAUDE_PID",
+        "CLAUDECODE",
+    ];
 
     public void Dispose()
     {
@@ -146,6 +190,48 @@ public sealed class ClaudeProcessLauncher : IClaudeProcessLauncher, IDisposable
             }
         }
 
-        public void Dispose() => process.Dispose();
+        /// <summary>
+    /// Removes the environment markers a parent Claude Code session leaves behind, so the run we
+    /// launch is a session in its own right.
+    /// </summary>
+    /// <remarks>
+    /// If NightShift is started from inside a Claude Code session — which is exactly how it gets
+    /// developed and tested — the child process inherits that session's variables. Observed
+    /// consequence: a spawned run reported <i>"Transcript saving is off — inherited
+    /// CLAUDE_CODE_CHILD_SESSION marker"</i> and silently stopped persisting its transcript, which is
+    /// the one artefact an unattended run exists to leave behind.
+    /// <para>
+    /// Only the session-identity markers are cleared. <c>CLAUDE_CONFIG_DIR</c> and anything else the
+    /// user set deliberately are left alone — this removes an accident of parentage, not the user's
+    /// configuration.
+    /// </para>
+    /// </remarks>
+    internal static void ScrubInheritedSessionMarkers(ProcessStartInfo startInfo)
+    {
+        foreach (var name in InheritedSessionMarkers)
+        {
+            if (Environment.GetEnvironmentVariable(name) is not null)
+            {
+                // Setting it to null in the child's environment block removes it.
+                startInfo.Environment[name] = null;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Variables that identify the *parent* session. Observed on a live Claude Code session,
+    /// 2026-07-27.
+    /// </summary>
+    static readonly string[] InheritedSessionMarkers =
+    [
+        "CLAUDE_CODE_CHILD_SESSION",
+        "CLAUDE_CODE_SESSION_ID",
+        "CLAUDE_CODE_BRIDGE_SESSION_ID",
+        "CLAUDE_CODE_ENTRYPOINT",
+        "CLAUDE_PID",
+        "CLAUDECODE",
+    ];
+
+    public void Dispose() => process.Dispose();
     }
 }

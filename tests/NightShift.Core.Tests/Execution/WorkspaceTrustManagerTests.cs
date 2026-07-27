@@ -523,4 +523,69 @@ public sealed class WorkspaceTrustManagerTests : IDisposable
     [Fact]
     public void The_backup_suffix_is_the_one_the_restore_button_looks_for() =>
         Assert.Equal(".nightshift.bak", WorkspaceTrustManager.BackupSuffix);
+    // -- Concurrent writers (plan.md section 5.3.1) --------------------------------------------
+
+    [Fact]
+    public async Task Each_apply_reads_fresh_state_so_another_writer_is_never_rolled_back()
+    {
+        // Deterministic stand-in for the real hazard: Claude Code rewrites this file continuously,
+        // so anything cached from an earlier read is already stale. Writing back a remembered
+        // document would roll their change back.
+        WriteConfig("""{ "numStartups": 1, "projects": {} }""");
+        var manager = CreateManager();
+
+        var first = await manager.ApplyAsync(ProjectDirectory);
+        Assert.True(first.IsTrusted);
+
+        // Somebody else updates the file, preserving what we wrote.
+        var external = ReadConfig();
+        external["numStartups"] = 2;
+        external["theirNewKey"] = "added by the CLI";
+        WriteConfig(external.ToJsonString());
+
+        var second = await manager.ApplyAsync(Path.Combine(_temp.Path, "another-project"));
+        Assert.True(second.IsTrusted);
+
+        var root = ReadConfig();
+        Assert.Equal(2, root["numStartups"]!.GetValue<int>());
+        Assert.Equal("added by the CLI", root["theirNewKey"]!.GetValue<string>());
+
+        // Both projects survive: the first apply's keys were not lost by the second.
+        Assert.True(Projects(root).Count >= 4);
+    }
+
+    [Fact]
+    public async Task A_file_that_never_settles_is_refused_rather_than_clobbered()
+    {
+        WriteConfig("""{ "projects": {} }""");
+        var manager = CreateManager();
+
+        using var cts = new CancellationTokenSource();
+        var churn = Task.Run(async () =>
+        {
+            var n = 0;
+            while (!cts.IsCancellationRequested)
+            {
+                try
+                {
+                    File.WriteAllText(ConfigPath, $$"""{ "n": {{n++}}, "projects": {} }""");
+                }
+                catch (IOException)
+                {
+                }
+
+                await Task.Delay(1, CancellationToken.None);
+            }
+        });
+
+        var result = await manager.ApplyAsync(ProjectDirectory);
+        await cts.CancelAsync();
+        await churn;
+
+        // Either it squeezed a write in or it gave up, but it must never throw and must never leave
+        // the file unparseable.
+        Assert.True(result.Outcome is WorkspaceTrustOutcome.Applied or WorkspaceTrustOutcome.Failed);
+        Assert.NotNull(ReadConfig()["projects"]);
+    }
+
 }

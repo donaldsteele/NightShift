@@ -105,6 +105,12 @@ public sealed record WorkspaceTrustRestoreResult(bool Restored, string BackupPat
 public sealed class WorkspaceTrustManager
 {
     /// <summary>Appended to the config path to form the backup name. Note: <b>nightshift</b>.</summary>
+    /// <summary>
+    /// How many times a trust write is retried when the file changes underneath it. Small on
+    /// purpose: a file changing this often means something else owns it right now.
+    /// </summary>
+    public const int MaxWriteAttempts = 4;
+
     public const string BackupSuffix = ".nightshift.bak";
 
     /// <summary>The global config file, always directly under the user profile.</summary>
@@ -259,54 +265,86 @@ public sealed class WorkspaceTrustManager
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var read = await ReadAsync(cancellationToken).ConfigureAwait(false);
-
-            // An existing file we cannot parse is left exactly as it is. Overwriting it would
-            // destroy the user's whole configuration on the strength of our own parser.
-            if (read.Root is null && read.Exists)
+            for (var attempt = 1; ; attempt++)
             {
-                _logger.LogError("Not applying trust: {Path} could not be read ({Problem}).", ConfigPath, read.Problem);
-                return Failed(keys, read.Problem);
-            }
+                // Snapshot what is on disk now. Claude Code rewrites this file continuously while a
+                // session is live (plan.md §5.3.1), so it may change between our read and our write,
+                // and blindly writing back would discard whatever it just recorded. Refusing to
+                // write while claude runs is not an option: on a developer's machine it is
+                // essentially always running, so we would never apply trust at all.
+                var snapshot = await TryReadRawAsync(cancellationToken).ConfigureAwait(false);
 
-            var root = read.Root ?? [];
-            var changed = false;
+                var read = await ReadAsync(cancellationToken).ConfigureAwait(false);
 
-            if (root[ProjectsProperty] is not JsonObject projects)
-            {
-                if (root.TryGetPropertyValue(ProjectsProperty, out var existing) && existing is not null)
+                // An existing file we cannot parse is left exactly as it is. Overwriting it would
+                // destroy the user's whole configuration on the strength of our own parser.
+                if (read.Root is null && read.Exists)
                 {
-                    return Failed(keys, $"`{ProjectsProperty}` in {ConfigPath} is not a JSON object.");
+                    _logger.LogError("Not applying trust: {Path} could not be read ({Problem}).", ConfigPath, read.Problem);
+                    return Failed(keys, read.Problem);
                 }
 
-                projects = [];
-                root[ProjectsProperty] = projects;
-                changed = true;
+                var root = read.Root ?? [];
+                var changed = false;
+
+                if (root[ProjectsProperty] is not JsonObject projects)
+                {
+                    if (root.TryGetPropertyValue(ProjectsProperty, out var existing) && existing is not null)
+                    {
+                        return Failed(keys, $"`{ProjectsProperty}` in {ConfigPath} is not a JSON object.");
+                    }
+
+                    projects = [];
+                    root[ProjectsProperty] = projects;
+                    changed = true;
+                }
+
+                if (Validate(projects, keys) is { } invalid)
+                {
+                    return Failed(keys, invalid);
+                }
+
+                foreach (var key in keys)
+                {
+                    changed |= EnsureTrusted(projects, key);
+                }
+
+                if (!changed)
+                {
+                    return new WorkspaceTrustApplyResult(
+                        WorkspaceTrustOutcome.AlreadyTrusted, keys, HasBackup ? BackupPath : null, null);
+                }
+
+                var json = root.ToJsonString(WriteOptions);
+
+                // Re-check immediately before replacing the file. If it moved since the snapshot,
+                // something else wrote to it; start over so that change is merged, not lost.
+                var current = await TryReadRawAsync(cancellationToken).ConfigureAwait(false);
+                if (!string.Equals(current, snapshot, StringComparison.Ordinal))
+                {
+                    if (attempt >= MaxWriteAttempts)
+                    {
+                        _logger.LogWarning(
+                            "{Path} kept changing underneath us across {Attempts} attempts; not applying trust.",
+                            ConfigPath,
+                            MaxWriteAttempts);
+                        return Failed(keys, $"{ConfigPath} is being written by another process.");
+                    }
+
+                    _logger.LogInformation(
+                        "{Path} changed while a trust write was being prepared; retrying (attempt {Attempt}).",
+                        ConfigPath,
+                        attempt + 1);
+                    continue;
+                }
+
+                var backup = await WriteAsync(json, cancellationToken).ConfigureAwait(false);
+
+                _logger.LogInformation(
+                    "Trusted {Keys} in {Path}.", string.Join(", ", keys), ConfigPath);
+
+                return new WorkspaceTrustApplyResult(WorkspaceTrustOutcome.Applied, keys, backup, null);
             }
-
-            if (Validate(projects, keys) is { } invalid)
-            {
-                return Failed(keys, invalid);
-            }
-
-            foreach (var key in keys)
-            {
-                changed |= EnsureTrusted(projects, key);
-            }
-
-            if (!changed)
-            {
-                return new WorkspaceTrustApplyResult(
-                    WorkspaceTrustOutcome.AlreadyTrusted, keys, HasBackup ? BackupPath : null, null);
-            }
-
-            var json = root.ToJsonString(WriteOptions);
-            var backup = await WriteAsync(json, cancellationToken).ConfigureAwait(false);
-
-            _logger.LogInformation(
-                "Trusted {Keys} in {Path}.", string.Join(", ", keys), ConfigPath);
-
-            return new WorkspaceTrustApplyResult(WorkspaceTrustOutcome.Applied, keys, backup, null);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -395,6 +433,25 @@ public sealed class WorkspaceTrustManager
         }
 
         return backup;
+    }
+
+    /// <summary>
+    /// The file's exact current bytes as text, or null when it is absent or unreadable. Used only to
+    /// detect that something else wrote to it between our read and our write.
+    /// </summary>
+    async Task<string?> TryReadRawAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            return File.Exists(ConfigPath)
+                ? await File.ReadAllTextAsync(ConfigPath, cancellationToken).ConfigureAwait(false)
+                : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogDebug(ex, "Could not re-read {Path} for the concurrency check.", ConfigPath);
+            return null;
+        }
     }
 
     async Task<(JsonObject? Root, bool Exists, string? Problem)> ReadAsync(CancellationToken cancellationToken)

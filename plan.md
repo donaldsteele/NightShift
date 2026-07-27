@@ -401,6 +401,13 @@ Implement `WorkspaceTrustManager` in `Core/Execution/`:
       round-trip against a fixture with unrelated top-level keys and assert they all survive.
 - [ ] Never write to `.claude.json` while a `claude` process is running. The `RunGate` already
       serializes runs; take the same gate here.
+      **Implemented as optimistic concurrency, not as a refusal.** The obvious reading — refuse to
+      write while a `claude` process is live — is unusable: on a developer's machine `claude` is
+      essentially always running, so trust would never be applied at all. Instead `ApplyAsync`
+      snapshots the file, re-reads it immediately before replacing it, and starts over if it moved
+      (up to `MaxWriteAttempts`, then gives up rather than clobbering). A file that never settles
+      returns `Failed` with a clear reason and writes nothing.
+
       **Measured 2026-07-26:** the CLI rewrites this file *continuously during a session*, not only
       on exit — over ~20 minutes of an unrelated live session, `promptQueueUseCount`,
       `cachedGrowthBookFeatures`, `cachedExperimentData`, `cachedGrowthBookFeaturesAt`,
@@ -514,6 +521,16 @@ with `WorkingDirectory = ProjectDirectory`, `RedirectStandardOutput/Error = true
 - Enforce `MaxRunDurationMinutes` (default 55, so a run cannot outlive its slot). On timeout,
   send SIGTERM-equivalent (`Process.Kill(entireProcessTree: true)`) and record the run as
   `TimedOut`.
+
+> **Inherited session markers are scrubbed.** If NightShift is launched from inside a Claude Code
+> session — exactly how it gets developed and tested — the child inherits that session's identity
+> variables. Observed consequence: a spawned run reported *"Transcript saving is off — inherited
+> `CLAUDE_CODE_CHILD_SESSION` marker"* and silently stopped persisting its transcript, which is the
+> one artefact an unattended run exists to leave behind. `ClaudeProcessLauncher` clears
+> `CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_BRIDGE_SESSION_ID`,
+> `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_PID` and `CLAUDECODE` from the child environment.
+> `CLAUDE_CONFIG_DIR` and anything else deliberately set are left alone: this removes an accident of
+> parentage, not the user's configuration.
 
 ### 5.5 Terminal mode (`LaunchMode.VisibleTerminal`)
 

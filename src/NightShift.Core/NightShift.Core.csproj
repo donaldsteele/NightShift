@@ -18,4 +18,9 @@
     <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- So tests can reach implementation details that are not worth widening the public API for. -->
+    <InternalsVisibleTo Include="NightShift.Core.Tests" />
+  </ItemGroup>
+
 </Project>
