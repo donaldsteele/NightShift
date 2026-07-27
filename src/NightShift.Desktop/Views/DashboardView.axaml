@@ -248,7 +248,7 @@
               <Button Content="Stop run"
                       Classes="danger"
                       Command="{Binding StopRunCommand}"
-                      ToolTip.Tip="Cancels a run started from this window. A run the background scheduler owns cannot be cancelled from here." />
+                      ToolTip.Tip="Stops the run in flight, whether it was started here or by the scheduler. The process tree is killed and the run is recorded as stopped." />
             </StackPanel>
 
             <TextBlock Grid.Column="1"

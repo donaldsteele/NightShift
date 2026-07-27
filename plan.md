@@ -921,25 +921,36 @@ Single-instance enforcement via a named `Mutex`; a second launch surfaces the ex
   the dashboard reflects a real run end-to-end; the app survives being left running for an hour.
 
 ### Phase 6 — Hardening and ship
-- [ ] Global exception handlers (`AppDomain.UnhandledException`,
-      `TaskScheduler.UnobservedTaskException`, Avalonia dispatcher) → log + non-fatal dialog.
+- [x] Global exception handlers (`AppDomain.UnhandledException`,
+      `TaskScheduler.UnobservedTaskException`, Avalonia dispatcher) → log + non-fatal notice.
+      The dispatcher handler marks faults **handled**: a dead UI with a live tray icon over a
+      still-running scheduler is worse than a degraded window.
 - [ ] Retry/backoff audit: nothing can busy-loop when Claude, the network, or the endpoint is down.
-- [ ] Verify no secret ever reaches a log or the history store (automated test).
-- [ ] `dotnet publish -c Release -r win-x64 --self-contained false /p:PublishSingleFile=true`;
-      confirm a clean-machine-ish run.
-- [ ] Write `README.md`: setup, the caveman install commands, the undocumented-endpoint caveat,
+- [x] Verify no secret ever reaches a log or the history store (automated test).
+      `SecretLeakAuditTests` covers the *routes*, not just the redactor: log file, run transcript,
+      history record, `settings.json`, and record `ToString()`. It found a real leak on its first
+      run — `ClaudeCredentials` is a record, so its generated `ToString()` printed the access token
+      into any interpolated log line, exception message or UI label, none of which pass through the
+      log formatter's redactor.
+- [x] `dotnet publish -c Release -r win-x64 --self-contained false /p:PublishSingleFile=true`;
+      confirm a clean-machine-ish run. Verified: the published exe starts, reads live usage, anchors
+      its schedule to the next reset and logs no errors.
+      **Publish size needed work.** The bare command emits 133 MB across five files, ~120 MB of it
+      dependency symbols (`libSkiaSharp.pdb` alone is 84 MB). The csproj now strips managed and
+      native symbols in Release and bundles the native libraries, giving **one 33 MB exe**.
+- [x] Write `README.md`: setup, the caveman install commands, the undocumented-endpoint caveat,
       and a "what to do when usage detection breaks" section.
-- [ ] **Screenshots of the app in action**, captured from the real running window — not mock-ups —
+- [x] **Screenshots of the app in action**, captured from the real running window — not mock-ups —
       and committed under `docs/images/`. At minimum the Dashboard (gauges with live figures, a run
       streaming into the output pane, preflight pills), Settings, and History with real rows.
       Sanitize before committing: no usernames in paths, no session ids, no personal project names.
       Reference them from the README so the first screenful of the page shows the thing working.
-- [ ] **README must open with why you would use this**, in depth and honestly — the problem it
+- [x] **README must open with why you would use this**, in depth and honestly — the problem it
       solves (a subscription's quota resets whether or not you were awake to use it), what it does
       unattended, what it deliberately will not do, and the real risks: it runs Claude Code with a
       broad tool surface against your repo with no human present, and it depends on an undocumented
       endpoint that can vanish. Someone should be able to decide *not* to use it from the README.
-- [ ] **README must explain how to get it**: download the published exe from Releases, or build from
+- [x] **README must explain how to get it**: download the published exe from Releases, or build from
       source; prerequisites (.NET 10 runtime or the self-contained build, Claude Code installed and
       logged in, the caveman plugin, a git repo with a `plan.md`); and first-run setup ending at a
       green preflight.

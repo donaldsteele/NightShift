@@ -522,35 +522,43 @@ public sealed partial class DashboardViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// Stops a run <b>this window started</b>. plan.md §9.1 puts <c>Stop run</c> on the output
-    /// pane's toolbar, but Core exposes no kill switch for a run the background scheduler owns —
-    /// cancellation travels down the <see cref="CancellationToken"/> handed to
-    /// <see cref="PilotScheduler.RunNowAsync"/>, and only a manual run has one this view model
-    /// holds. The command is therefore disabled for scheduled runs rather than silently doing
-    /// nothing.
+    /// Stops whichever run is in flight, whoever started it (plan.md §9.1).
     /// </summary>
+    /// <remarks>
+    /// A manual run is cancelled through the token this view model holds. A run the background
+    /// scheduler owns has no such token, so it goes through
+    /// <see cref="PilotScheduler.StopCurrentRun"/>, which cancels the cycle's own linked source.
+    /// Both paths end with the runner killing the process tree and recording the run, so a stopped
+    /// run is history rather than an unexplained gap.
+    /// </remarks>
     [RelayCommand(CanExecute = nameof(CanStopRun))]
     void StopRun()
     {
-        var cts = _manualRunCts;
-        if (cts is null)
-        {
-            return;
-        }
-
         StatusMessage = "Stopping the run…";
 
-        try
+        var cts = _manualRunCts;
+        if (cts is not null)
         {
-            cts.Cancel();
+            try
+            {
+                cts.Cancel();
+                return;
+            }
+            catch (ObjectDisposedException)
+            {
+                // The run finished between the CanExecute check and here; fall through to the
+                // scheduler, which will simply report that nothing was in flight.
+            }
         }
-        catch (ObjectDisposedException)
+
+        if (!_scheduler.StopCurrentRun())
         {
-            // The run finished between the CanExecute check and here.
+            StatusMessage = "Nothing is running.";
         }
     }
 
-    bool CanStopRun => _manualRunCts is not null;
+    /// <summary>Enabled whenever anything is running, not only a run this window started.</summary>
+    bool CanStopRun => _manualRunCts is not null || _scheduler.IsRunning;
 
     [RelayCommand]
     async Task CopyOutputAsync(CancellationToken cancellationToken)
