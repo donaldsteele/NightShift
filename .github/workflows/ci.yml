@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # The app is Windows-first and the test suite touches Windows paths, the registry
+    # (StartWithWindowsRegistrar) and process launching, so a Linux runner would prove nothing.
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          # global.json pins 10.0.302; let setup-dotnet honour it rather than restating the version.
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        # Directory.Build.props sets TreatWarningsAsErrors, so a warning fails here by design.
+        run: dotnet build --no-restore --configuration Release
+
+      - name: Test
+        run: dotnet test --no-build --configuration Release --logger "trx;LogFileName=results.trx" --results-directory artifacts/test-results
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: artifacts/test-results
+          retention-days: 14
+
+      - name: Publish single file
+        run: >
+          dotnet publish src/NightShift.Desktop
+          --configuration Release
+          --runtime win-x64
+          --self-contained false
+          -p:PublishSingleFile=true
+          --output artifacts/publish
+
+      - name: Check the published output is one lean file
+        shell: pwsh
+        run: |
+          # Regression guard. The bare publish command emits ~133 MB across five files, most of it
+          # dependency symbols; the csproj strips them. If someone removes that configuration this
+          # step fails rather than quietly shipping a 133 MB "single file" release.
+          $files = Get-ChildItem artifacts/publish -File
+          $files | ForEach-Object { "{0,10:N0}  {1}" -f $_.Length, $_.Name }
+
+          $exe = $files | Where-Object Name -eq 'NightShift.Desktop.exe'
+          if (-not $exe) { throw 'NightShift.Desktop.exe was not published.' }
+
+          $stray = $files | Where-Object Name -ne 'NightShift.Desktop.exe'
+          if ($stray) { throw "Publish emitted more than the exe: $($stray.Name -join ', ')" }
+
+          $mb = [math]::Round($exe.Length / 1MB, 1)
+          Write-Host "Published exe is $mb MB."
+          if ($mb -gt 60) { throw "Published exe grew to $mb MB; expected roughly 33 MB." }
+
+      - name: Upload the executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: NightShift-win-x64
+          path: artifacts/publish/NightShift.Desktop.exe
+          retention-days: 30

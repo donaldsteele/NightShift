@@ -1,0 +1,71 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to release (must already exist)
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      # A release must never ship something the test suite has not passed.
+      - name: Build and test
+        run: |
+          dotnet build --configuration Release
+          dotnet test --no-build --configuration Release
+
+      - name: Publish single file
+        run: >
+          dotnet publish src/NightShift.Desktop
+          --configuration Release
+          --runtime win-x64
+          --self-contained false
+          -p:PublishSingleFile=true
+          --output artifacts/publish
+
+      - name: Record the hash
+        shell: pwsh
+        run: |
+          $exe = 'artifacts/publish/NightShift.Desktop.exe'
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash
+          "$hash  NightShift.Desktop.exe" | Out-File artifacts/publish/SHA256SUMS.txt -Encoding ascii
+          Write-Host "SHA256 $hash"
+
+      - name: Create the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          draft: true
+          generate_release_notes: true
+          files: |
+            artifacts/publish/NightShift.Desktop.exe
+            artifacts/publish/SHA256SUMS.txt
+          body: |
+            Framework-dependent single-file build for Windows x64.
+
+            **Requires the [.NET 10 desktop runtime](https://dotnet.microsoft.com/download/dotnet/10.0)**,
+            plus Claude Code installed and signed in, and the caveman plugin. See the README for
+            first-run setup.
+
+            NightShift runs Claude Code unattended against your repository. Read the
+            "What this is not" section of the README before pointing it at anything you care about.
+
+            Verify your download against `SHA256SUMS.txt`.

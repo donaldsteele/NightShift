@@ -357,8 +357,28 @@ healthy runs as quota-blocked and stall the pilot for hours.
 
 ## Status
 
-Phases 0–5 of `plan.md` are complete: settings and persistence, usage providers, execution,
-scheduler, and UI. Phase 6 (hardening and ship) is partly done — global exception handlers, the
-secret-leak audit and the lean single-file publish have landed; the plan file's checkboxes for that
-phase have not been ticked, so treat `plan.md` as behind the code rather than ahead of it. There is
-no CI, no LICENSE, and no packaged release.
+All six phases of `plan.md` are complete: scaffolding, settings and persistence, usage providers,
+execution, scheduler and preflight, UI, and hardening. 659 tests pass (553 Core, 106 Desktop) and
+the build runs with warnings as errors.
+
+CI builds and tests every push on a Windows runner and guards the published output against
+regressing to the 133 MB, five-file version. Tagging `v*` drafts a release with the single-file exe
+and its SHA256.
+
+`plan.md` is the authoritative design document and carries the corrections that reality forced —
+several of the things this app does are the opposite of what the plan originally specified, and each
+reversal is recorded there with the measurement that caused it.
+
+---
+
+## License
+
+[PolyForm Noncommercial 1.0.0](LICENSE.md). Free for any noncommercial purpose: personal projects,
+research, study, hobby work, and use by charities, schools, public research and government bodies.
+
+**Commercial use requires a separate license** — contact the author. This is source-available, not
+OSI open source; restricting commercial use is precisely what OSI approval forbids, so calling it
+"open source" would be inaccurate.
+
+One edge worth naming: "noncommercial" is fuzzy for contractors. Using NightShift on client work you
+are paid for is commercial use.

@@ -954,6 +954,17 @@ Single-instance enforcement via a named `Mutex`; a second launch surfaces the ex
       source; prerequisites (.NET 10 runtime or the self-contained build, Claude Code installed and
       logged in, the caveman plugin, a git repo with a `plan.md`); and first-run setup ending at a
       green preflight.
+- [x] **License: PolyForm Noncommercial 1.0.0** (`LICENSE.md`), verbatim from the canonical source
+      with a `Required Notice:` line appended. Free for personal, research, educational, charitable
+      and government use; commercial use needs a separate license. This is **source-available, not
+      OSI open source** — restricting commercial use is exactly what OSI approval forbids, so the
+      README says so rather than claiming otherwise.
+- [x] **CI/CD** (`.github/workflows/`). `ci.yml` builds and tests every push and PR on a Windows
+      runner — Linux would prove nothing here, since the suite touches Windows paths, the registry
+      and process launching. It also **guards the publish output**: the bare publish command emits
+      133 MB across five files, so CI fails if more than the single exe appears or if it exceeds
+      60 MB. `release.yml` builds, tests, publishes and drafts a GitHub release on a `v*` tag, with
+      a SHA256 for the binary.
 - **Acceptance:** a fresh clone builds, tests pass, publish produces a working single exe.
 
 ---
