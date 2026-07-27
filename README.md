@@ -146,24 +146,30 @@ but only Windows is tested and shipped.
 | A git repository containing `plan.md` | The plan file name is configurable; the default is `plan.md`. |
 | `git` on `PATH` | Only for the two git preflight checks. Its absence is a warning, not a blocker. |
 
-### There is no Releases page
+### Download a build
 
-This repository has no remote, no `.github/` directory, no CI, and no published binaries. **Build
-from source.** If a release is ever cut, it would be the output of:
+Every push to `main` produces a `NightShift-win-x64` artifact on the
+[Actions tab](https://github.com/donaldsteele/NightShift/actions) — a single framework-dependent
+`NightShift.Desktop.exe` of roughly 33 MB. Tagged versions (`v*`) additionally produce a GitHub
+release with the same binary and a `SHA256SUMS.txt` to verify it against.
+
+Either way you need the [.NET 10 desktop runtime](https://dotnet.microsoft.com/download/dotnet/10.0)
+on the target machine; the build is framework-dependent, not self-contained.
+
+The publish command, if you want to produce it yourself:
 
 ```
 dotnet publish -c Release -r win-x64 --self-contained false /p:PublishSingleFile=true
 ```
 
-— a single framework-dependent `NightShift.Desktop.exe` of roughly 33 MB, requiring the .NET 10
-runtime on the target machine. (The `Release` configuration strips managed and native symbol files
-from the publish output; without that the same command emits about 133 MB, ~120 MB of which is
-`.pdb` files for libraries nobody debugs.)
+The `Release` configuration strips managed and native symbol files and bundles the native libraries;
+without that the same command emits about 133 MB across five files, ~120 MB of which is `.pdb` files
+for libraries nobody debugs. CI fails if that regression ever comes back.
 
-### Build and run
+### Build and run from source
 
 ```
-git clone <this repository>
+git clone https://github.com/donaldsteele/NightShift.git
 cd NightShift
 dotnet build
 dotnet run --project src/NightShift.Desktop
@@ -237,11 +243,11 @@ a token-shaped string never reaches the sink.
 - **Force run** (behind the `⋯` overflow, red, confirmation required) bypasses the usage check. It
   can deliberately burn a weekly cap.
 - Neither reprograms the schedule. A manual action must not silently change the cadence.
-- **Stop run** cancels a run **this window started**. It is disabled for a run the background
-  scheduler started on its own, rather than silently doing nothing. To stop a scheduled run you
-  currently have to wait for `Max run duration`, or quit the app. (`plan.md` §6.1 describes a
-  `StopCurrentRun` that reaches any in-flight run "whoever started it"; that is not what the code
-  does today.)
+- **Stop run** stops whichever run is in flight, whether this window started it or the background
+  scheduler did. A manual run is cancelled through the token the window holds; a scheduled run goes
+  through `PilotScheduler.StopCurrentRun()`, which cancels that cycle's own linked token. Either
+  way the process tree is killed and the run is recorded as "Stopped by the user." rather than
+  leaving an unexplained gap in the history.
 
 ---
 
