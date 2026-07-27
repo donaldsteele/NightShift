@@ -929,6 +929,20 @@ Single-instance enforcement via a named `Mutex`; a second launch surfaces the ex
       confirm a clean-machine-ish run.
 - [ ] Write `README.md`: setup, the caveman install commands, the undocumented-endpoint caveat,
       and a "what to do when usage detection breaks" section.
+- [ ] **Screenshots of the app in action**, captured from the real running window — not mock-ups —
+      and committed under `docs/images/`. At minimum the Dashboard (gauges with live figures, a run
+      streaming into the output pane, preflight pills), Settings, and History with real rows.
+      Sanitize before committing: no usernames in paths, no session ids, no personal project names.
+      Reference them from the README so the first screenful of the page shows the thing working.
+- [ ] **README must open with why you would use this**, in depth and honestly — the problem it
+      solves (a subscription's quota resets whether or not you were awake to use it), what it does
+      unattended, what it deliberately will not do, and the real risks: it runs Claude Code with a
+      broad tool surface against your repo with no human present, and it depends on an undocumented
+      endpoint that can vanish. Someone should be able to decide *not* to use it from the README.
+- [ ] **README must explain how to get it**: download the published exe from Releases, or build from
+      source; prerequisites (.NET 10 runtime or the self-contained build, Claude Code installed and
+      logged in, the caveman plugin, a git repo with a `plan.md`); and first-run setup ending at a
+      green preflight.
 - **Acceptance:** a fresh clone builds, tests pass, publish produces a working single exe.
 
 ---

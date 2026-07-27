@@ -22,6 +22,10 @@ sealed class Program
         var paths = AppPaths.CreateDefault();
         LoggingSetup.Initialize(paths);
 
+        // Before anything else can throw. An unattended pilot fails with nobody watching, so the one
+        // unacceptable outcome is vanishing without writing down why.
+        GlobalExceptionHandler.Install();
+
         try
         {
             // plan.md §9.4: one instance, because two would mean two schedulers, two run gates and

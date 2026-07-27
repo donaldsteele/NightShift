@@ -1,6 +1,8 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using NightShift.Core.Logging;
 
 namespace NightShift.Core.Usage;
 
@@ -19,6 +21,23 @@ public sealed record ClaudeCredentials(string AccessToken, DateTimeOffset? Expir
 
     /// <summary>Deterministic form of <see cref="IsExpired"/> for callers that own a clock.</summary>
     public bool IsExpiredAt(DateTimeOffset now) => ExpiresAt is { } expiry && expiry <= now;
+
+    /// <summary>
+    /// Redacted on purpose. A record's generated <c>ToString()</c> prints every property, so the
+    /// default would put the access token into any log line, exception message or UI label that
+    /// interpolates this object — routes that never pass through the log formatter's redactor.
+    /// Found by <c>SecretLeakAuditTests</c>, which exists precisely to catch this class of leak.
+    /// </summary>
+    public override string ToString() =>
+        $"ClaudeCredentials {{ AccessToken = {SecretRedactor.Placeholder}, ExpiresAt = {ExpiresAt:u} }}";
+
+    /// <summary>Suppresses the compiler-generated member that would otherwise print the token.</summary>
+    private bool PrintMembers(StringBuilder builder)
+    {
+        builder.Append("AccessToken = ").Append(SecretRedactor.Placeholder);
+        builder.Append(", ExpiresAt = ").Append(ExpiresAt?.ToString("u") ?? "null");
+        return true;
+    }
 }
 
 /// <summary>

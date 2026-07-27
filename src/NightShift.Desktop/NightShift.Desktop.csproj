@@ -11,6 +11,20 @@
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
   </PropertyGroup>
 
+  <!--
+    Release publish only. Without these, `dotnet publish` emits 133 MB, of which ~120 MB is
+    dependency symbol files nobody downloading a release wants — libSkiaSharp.pdb alone is 84 MB.
+    Native libraries are bundled into the single file too, otherwise "single file" still ships three
+    loose DLLs beside the exe.
+  -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <AllowedReferenceRelatedFileExtensions>none</AllowedReferenceRelatedFileExtensions>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
   <ItemGroup>
     <AvaloniaResource Include="Assets\**" />
   </ItemGroup>
@@ -33,5 +47,16 @@
   <ItemGroup>
     <ProjectReference Include="..\NightShift.Core\NightShift.Core.csproj" />
   </ItemGroup>
+
+  <!--
+    The native SkiaSharp/HarfBuzz packages ship their own .pdb files, which the managed symbol
+    switches above do not reach: 105 MB of symbols for libraries we do not debug, in a download
+    whose actual payload is 33 MB.
+  -->
+  <Target Name="RemoveNativeSymbolsFromPublish" AfterTargets="ComputeFilesToPublish">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(Extension)' == '.pdb'" />
+    </ItemGroup>
+  </Target>
 
 </Project>
