@@ -17,7 +17,11 @@ namespace NightShift.Core.Configuration;
 public sealed record PilotSettings
 {
     /// <summary>Bumped whenever a migration is needed. See <see cref="JsonSettingsStore"/>.</summary>
-    public const int CurrentVersion = 1;
+    /// <remarks>
+    /// Version 2 introduced <c>{planConventions}</c> in <see cref="DefaultPromptTemplate"/>; a stored
+    /// template still equal to <see cref="LegacyPromptTemplateV1"/> is replaced on load.
+    /// </remarks>
+    public const int CurrentVersion = 2;
 
     public const int MinIntervalMinutes = 5;
     public const int MaxIntervalMinutes = 1440;
@@ -27,9 +31,34 @@ public sealed record PilotSettings
     /// <summary>
     /// The prompt body sent to Claude, per plan.md §5.2. The `/caveman &lt;level&gt;` line is *not*
     /// part of it — <c>PromptBuilder</c> prepends that from <see cref="CavemanLevel"/> so the two
-    /// settings stay independent. <c>{planFile}</c> is substituted with <see cref="PlanFileName"/>.
+    /// settings stay independent. <c>{planFile}</c> is substituted with <see cref="PlanFileName"/>,
+    /// and <c>{planConventions}</c> with the rules for the plan's <see cref="PlanFormat"/>.
     /// </summary>
     public const string DefaultPromptTemplate = """
+        Continue work on this project.
+
+        Read `{planFile}` in this directory. It is the authoritative task list.
+
+        {planConventions}
+
+        Rules for this session:
+        - You are running unattended. There is no human available to answer questions.
+          Never ask for confirmation, clarification, or approval — decide and proceed.
+        - Work only on what {planFile} already describes. Do not invent new scope.
+        - Commit your work, using a conventional commit message.
+        - Run the project's tests before you finish. If they fail, fix them.
+        - End your run in a clean state: no half-applied edits, everything committed.
+        """;
+
+    /// <summary>
+    /// The template as it shipped before <c>{planConventions}</c> existed.
+    /// </summary>
+    /// <remarks>
+    /// Kept verbatim so <see cref="JsonSettingsStore"/> can recognise a stored template the user
+    /// never edited and upgrade it. A template that differs from this by so much as a space is
+    /// treated as hand-written and left exactly alone.
+    /// </remarks>
+    public const string LegacyPromptTemplateV1 = """
         Continue work on this project.
 
         Read `{planFile}` in this directory. It is the authoritative task list.
@@ -59,9 +88,28 @@ public sealed record PilotSettings
 
     public string PlanFileName { get; set; } = "plan.md";
 
+    /// <summary>
+    /// Which convention <see cref="PlanFileName"/> uses. Detected by default (plan.md §9.1).
+    /// </summary>
+    /// <remarks>
+    /// Decides both the project card's tally and which conventions the prompt tells a run to follow,
+    /// so getting it wrong is not cosmetic: a milestone plan parsed as checkboxes reports "0 of 0",
+    /// and a run told to tick a checkbox that does not exist can never mark its work done.
+    /// </remarks>
+    public PlanFormat PlanFormat { get; set; } = PlanFormat.Auto;
+
     // ── Schedule ───────────────────────────────────────────────────────────────────────────────
 
-    public int IntervalMinutes { get; set; } = 60;
+    /// <summary>
+    /// Minutes between checks, and an upper bound rather than a metronome (plan.md §6).
+    /// </summary>
+    /// <remarks>
+    /// Five, not an hour: a window that rolls over is only useful until it fills again, and an hourly
+    /// tick can leave most of a freed session window unspent. A check that decides to skip costs one
+    /// cached usage lookup, and <c>RunGate</c> makes a tick that lands during a run skip rather than
+    /// queue, so the frequency is close to free.
+    /// </remarks>
+    public int IntervalMinutes { get; set; } = 5;
 
     public bool RunOnStartup { get; set; }
 

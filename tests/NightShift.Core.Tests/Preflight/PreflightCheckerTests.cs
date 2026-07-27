@@ -314,6 +314,54 @@ public sealed class PreflightCheckerTests : IDisposable
     }
 
     [Fact]
+    public async Task A_milestone_plan_is_detected_counted_and_carried_on_the_result()
+    {
+        File.WriteAllText(
+            _harness.PlanPath,
+            """
+            ### M0 — scaffold
+
+            ### M1 — the hard part — **delivered 2026-07-26**
+            **Status:** implemented.
+
+            ### M2 — the rest
+            """);
+
+        var result = await _harness.CheckAsync();
+        var check = result.Find(PreflightCheckId.PlanItems)!;
+
+        Assert.Equal(PlanFormat.Milestone, result.PlanFormat);
+        Assert.Equal(2, result.PlanItems?.Completed);      // M0 backfilled behind the delivered M1
+        Assert.Equal(1, result.PlanItems?.Remaining);
+        Assert.Equal(PreflightStatus.Ok, check.Status);
+        Assert.Contains("1 milestone left to do (2 of 3 milestones complete)", check.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_milestone_plan_with_everything_delivered_says_so_in_its_own_words()
+    {
+        File.WriteAllText(_harness.PlanPath, "### M0 — done — **delivered 2026-07-26**\n");
+
+        var check = await _harness.CheckAsync(PreflightCheckId.PlanItems);
+
+        Assert.Equal(PreflightStatus.Warning, check.Status);
+        Assert.Contains("already delivered", check.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("checkbox", check.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task A_checkbox_plan_still_reads_exactly_as_it_did()
+    {
+        // The regression that matters most: this repo's own plan.md must be unaffected by milestones.
+        File.WriteAllText(_harness.PlanPath, "## Phase 0\n- [x] a\n- [ ] b\n");
+
+        var result = await _harness.CheckAsync();
+
+        Assert.Equal(PlanFormat.Checkbox, result.PlanFormat);
+        Assert.Contains("1 item left to do (1 of 2 items complete)", result.Find(PreflightCheckId.PlanItems)!.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task The_counts_are_exposed_for_the_dashboard_card()
     {
         File.WriteAllText(_harness.PlanPath, "- [x] a\n- [x] b\n- [ ] c\n- [!] d\n");

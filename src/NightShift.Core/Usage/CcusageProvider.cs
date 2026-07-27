@@ -214,9 +214,17 @@ public sealed class CcusageProvider : IUsageProvider
     /// no Node, non-zero exit, garbage output, no active block, no resolvable token limit — comes
     /// back as <see cref="UsageSnapshot.Unavailable"/>; the scheduler decides what to do with that
     /// via <c>OnUsageUnavailable</c> (plan.md §4.3), so throwing here would only crash a tick.
+    /// <para>
+    /// <paramref name="forceRefresh"/> is ignored: this provider shells out on every call and has no
+    /// cache to bypass.
+    /// </para>
     /// </summary>
-    public async Task<UsageSnapshot> GetUsageAsync(CancellationToken cancellationToken = default)
+    public async Task<UsageSnapshot> GetUsageAsync(
+        bool forceRefresh = false,
+        CancellationToken cancellationToken = default)
     {
+        _ = forceRefresh;
+
         var command = ResolveCommand(_settingsStore.Current);
 
         CcusageResult result;

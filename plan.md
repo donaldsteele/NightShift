@@ -12,7 +12,7 @@
 A Windows-first (cross-platform-capable) desktop app that babysits a Claude Code project:
 
 1. You point it at a **project directory** containing an existing **`plan.md`**.
-2. Every **N minutes (default 60)** it wakes up and checks your **Claude subscription usage**.
+2. Every **N minutes (default 5)** it wakes up and checks your **Claude subscription usage**.
 3. If usage is **below a threshold (default 90%)**, it launches **Claude Code in that directory**,
    applies the **`caveman` skill at `full` level**, and instructs Claude to continue working
    through `plan.md`.
@@ -286,20 +286,31 @@ Build with `PromptBuilder`. The prompt sent to Claude is a single string:
 Continue work on this project.
 
 Read `plan.md` in this directory. It is the authoritative task list.
-Pick up from the first unchecked item and make concrete progress.
+
+Pick up from the first unchecked item in plan.md and make concrete progress.
+- After finishing an item, tick its checkbox.
+- If an item is ambiguous or blocked, mark it `- [!]` with a one-line note
+  explaining the blocker, then move to the next item.
+- Prefer finishing one item completely over starting several.
 
 Rules for this session:
 - You are running unattended. There is no human available to answer questions.
   Never ask for confirmation, clarification, or approval — decide and proceed.
-- Work only on items in plan.md. Do not invent new scope.
-- After finishing an item, tick its checkbox in plan.md and commit that change
-  along with the code, using a conventional commit message.
-- If an item is ambiguous or blocked, mark it `- [!]` in plan.md with a one-line
-  note explaining the blocker, then move to the next item.
-- Prefer finishing one item completely over starting several.
+- Work only on what plan.md already describes. Do not invent new scope.
+- Commit your work, using a conventional commit message.
 - Run the project's tests before you finish. If they fail, fix them.
 - End your run in a clean state: no half-applied edits, everything committed.
 ```
+
+> **Refinement (2026-07-27): the middle block is a `{planConventions}` token.**
+> The three bullets above are the *checkbox* conventions. A milestone plan (§9.1) gets a different
+> block telling the run to complete the lowest-numbered undelivered milestone and to write
+> `— **delivered YYYY-MM-DD**` plus a `**Status:**` line — the exact markers `PlanParser` reads
+> back, so a run that follows the prompt is what makes the tally move. `PromptBuilder` substitutes
+> whichever block matches the format preflight resolved; the scheduler pins that onto the settings
+> the runner receives, since preflight is the only thing that has actually read the plan file. A
+> template with no `{planConventions}` token is left alone, and `SettingsVersion` 2 upgrades a
+> stored template that is still the v1 default verbatim — a hand-edited one is never rewritten.
 
 > ## ⚠ Correction: the slash command MUST be namespaced
 >
@@ -587,8 +598,24 @@ spaces are ordinary on Windows. `RemoteControlName` overrides it entirely.
 
 `PilotScheduler : BackgroundService`.
 
-- Uses `TimeSpan.FromMinutes(settings.IntervalMinutes)` (default 60, range 5–1440) as the **upper
+- Uses `TimeSpan.FromMinutes(settings.IntervalMinutes)` (default 5, range 5–1440) as the **upper
   bound** between checks, not as a metronome.
+
+> **Correction (2026-07-27): the default interval is 5 minutes, not 60.**
+> An hourly tick can miss most of a freed window: quota that came back at 02:05 goes unspent until
+> 03:00, and the whole point of this app is that an unused window is gone. A cycle that decides to
+> skip costs one usage lookup, and `RunGate` makes a tick that lands during a run skip rather than
+> queue, so a short interval is close to free.
+>
+> Two consequences, both handled rather than lived with:
+> - **Reset alignment goes quiet.** Alignment only ever pulls a check *earlier* than
+>   `now + interval`, and with a 5-minute interval there is almost never anything to pull. That is
+>   fine — a 5-minute poll already catches a reset within 5 minutes — but the anchoring rule below
+>   is now mostly relevant to anyone who lengthens the interval.
+> - **Skips must not flood the history.** At 5 minutes a blocked pilot would write 288 rows a day
+>   into a 200-row index and prune every real run out of it. `RecordSkipAsync` therefore writes a
+>   skip only when the previous history row is not already a skip for the same reason; a recorded
+>   run resets that. A quiet night is one line, which is what the history was for.
 
 > **Refinement: the schedule anchors itself to quota resets.**
 > The interval alone is blind — it can park a check in the middle of a window and leave the pilot
@@ -622,11 +649,17 @@ spaces are ordinary on Windows. `RemoteControlName` overrides it entirely.
   1. Is the pilot enabled? → else `Skipped(Disabled)`
   2. Is a run already in flight (`RunGate`)? → else `Skipped(AlreadyRunning)`
   3. Preflight passes? → else `Skipped(PreflightFailed, details)`
-  4. Fetch usage. Unavailable → apply `OnUsageUnavailable`.
+  4. Fetch usage, forcing past the provider's 60s cache. Unavailable → apply `OnUsageUnavailable`.
+     A **force run** takes this path too: it bypasses the *gate*, not the reading.
   5. `metric >= Threshold` → `Skipped(OverThreshold, metric, resetsAt)`
      — and set the *next* check to `min(nextInterval, resetsAt + 1min)` so it resumes promptly
      when the window rolls over.
   6. Otherwise → `Run`.
+  7. When the run ends, **fetch usage again** (also forced) and carry it on `CycleCompleted` as
+     `UsageAfterRun`. The pre-run snapshot is, by definition, from before Claude spent anything;
+     showing it for the rest of the interval is what made the dashboard look frozen. The post-run
+     snapshot is also what `ScheduleNextAsync` anchors against, so a window that rolled over
+     *during* the run is seen immediately.
 - `RunGate` is a `SemaphoreSlim(1,1)`; a run that outlasts the interval simply causes the next
   tick to skip with `AlreadyRunning`. Never queue up runs.
 
@@ -772,6 +805,32 @@ string never reaches the sink.
   "approximate" chip when `IsApproximate`.
 - **Project card**: directory path (click to open in Explorer), `plan.md` status
   (`12 of 30 items complete` — parse `- [ ]` / `- [x]` / `- [!]` checkboxes), last run outcome.
+
+> **Refinement (2026-07-27): plans come in two formats, and the gate figure needs to be visible.**
+>
+> **Plan formats.** Not every plan is a checkbox list. A milestone plan is a sequence of
+> `### M7 — Title` headings, delivered ones marked `— **delivered YYYY-MM-DD**` in the heading or
+> by a `**Status:**` / `**Post-milestone status …**` body line, blocked ones by `**Blocked:**`.
+> Parsed with the checkbox counter such a file reports `0 of 0`, and — worse — the prompt tells the
+> run to "tick its checkbox", which it cannot do, so the plan never advances. `PlanParser` handles
+> both, `PlanFormat` (`Auto` / `Checkbox` / `Milestone`, default `Auto`) selects, and
+> `PromptBuilder` substitutes the matching conventions into the template's `{planConventions}`
+> token. Detection prefers checkboxes when a file has both — this repo's own plan.md is exactly
+> that shape. Fenced blocks are skipped in both, for the reason the checkbox counter already gives.
+>
+> **Everything numbered below the highest delivered milestone counts as delivered.** Plans start
+> marking milestones only once shipping begins, so the early ones carry no marker and a literal
+> reading calls a nearly finished project barely started. An explicit `**Blocked:**` beats the
+> backfill; a milestone someone deliberately flagged is never quietly counted as done.
+>
+> **The gate figure gets a number and an age.** `HighestOfAll` maximises over four windows but only
+> two have gauges, so a gate driven by `seven_day_opus` moved nothing on screen — which reads as a
+> value that never refreshes. The provenance line now shows
+> `Gate metric: Highest of all — 41% (7d Opus)` via `UsageMetricSelector.SelectDetailed`, plus
+> `Updated 2 min ago` recomputed on the one-second tick, and a caption under the gauges lists any
+> per-model window the provider reported. Mid-run `rate_limit_event` messages move the matching
+> gauge live at no HTTP cost — **display only**, never the gate, and always via the already-scaled
+> `UtilizationPercent` rather than the 0–1 wire fraction.
 - **Buttons**: `Run now`, `Force run` (in an overflow menu, red, confirmation dialog),
   `Pause` / `Resume`, `Refresh usage`.
 - **Live output pane**: monospace, auto-scrolling, streams the parsed transcript. Toolbar:
@@ -784,7 +843,7 @@ string never reaches the sink.
 Grouped into cards, saved on change with a debounce (no OK/Cancel):
 
 - **Project** — directory picker (`IStorageProvider.OpenFolderPickerAsync`), plan file name
-  (default `plan.md`).
+  (default `plan.md`), plan format (`Auto` / `Checkbox` / `Milestone`, default `Auto`).
 - **Schedule** — interval (numeric, minutes), run on startup, start with Windows, start minimized to tray.
 - **Usage gate** — threshold slider 50–100 (default 90), metric dropdown
   (`Highest of all` default / `Session 5h` / `Weekly 7d`), behaviour when usage is unavailable

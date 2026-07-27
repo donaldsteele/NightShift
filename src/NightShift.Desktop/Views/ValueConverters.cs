@@ -32,6 +32,7 @@ public sealed class SettingsLabelConverter : IValueConverter
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture) => value switch
     {
         UsageMetric metric => SettingsViewModel.Describe(metric),
+        PlanFormat format => SettingsViewModel.Describe(format),
         UsageUnavailableBehavior behavior => SettingsViewModel.Describe(behavior),
         LaunchMode mode => SettingsViewModel.Describe(mode),
         ResumeStrategy strategy => SettingsViewModel.Describe(strategy),

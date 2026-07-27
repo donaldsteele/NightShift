@@ -1,9 +1,9 @@
 # NightShift
 
-A Windows desktop app that babysits one Claude Code project. On an interval anchored to your
-subscription's quota resets it wakes up, reads your real utilization, and — if there is headroom —
-launches Claude Code in your project directory to work through `plan.md`. Everything it does is
-streamed into the window and written to disk.
+A Windows desktop app that babysits one Claude Code project. Every few minutes it wakes up, reads
+your real subscription utilization, and — if there is headroom — launches Claude Code in your
+project directory to work through `plan.md`. Everything it does is streamed into the window and
+written to disk.
 
 It is a small, single-purpose tool. Read the [risks](#what-this-is-not) before you point it at
 anything you care about.
@@ -40,11 +40,14 @@ unused window is gone.
 Separately, a lot of software work is *legible*: a checklist of items that a competent agent can
 pick up one at a time, given a repository and a task list. That is what `plan.md` is for. It is the
 authoritative list; Claude reads it, does the first unticked item, ticks it, commits, and stops.
+A plan can also be written as numbered milestones instead of checkboxes — see
+[Plan formats](#plan-formats).
 
 NightShift joins those two facts. It:
 
-- wakes on an interval (default 60 minutes) that it **pulls earlier** to land just after a quota
-  window resets, so a slot is spent when the most quota is available;
+- wakes on a short interval (default 5 minutes), so a window that rolls over is picked up while
+  there is still time to spend it. With reset alignment on, a check can also be pulled earlier to
+  land just after a reset, which matters mainly at longer intervals;
 - reads your **actual subscription utilization**, not token counts or dollars;
 - if the selected metric is below the threshold (default 90%), launches Claude Code in your project
   directory, with the `caveman` skill applied, told to continue through `plan.md` and to never ask
@@ -143,7 +146,7 @@ but only Windows is tested and shipped.
 | .NET 10 SDK, or the .NET 10 runtime | Pinned to SDK `10.0.302` (`rollForward: latestFeature`) in `global.json`. A published build is framework-dependent and needs only the runtime. |
 | Claude Code, installed and logged in | Verified against 2.1.220. Run `claude` once and sign in, so `~/.claude/.credentials.json` exists. |
 | The `caveman` plugin | `claude plugin marketplace add JuliusBrussee/caveman` then `claude plugin install caveman@caveman`. Preflight can run both commands for you. |
-| A git repository containing `plan.md` | The plan file name is configurable; the default is `plan.md`. |
+| A git repository containing `plan.md` | The plan file name is configurable; the default is `plan.md`. Checkbox and milestone plans are both understood — see [Plan formats](#plan-formats). |
 | `git` on `PATH` | Only for the two git preflight checks. Its absence is a warning, not a blocker. |
 
 ### Download a build
@@ -217,16 +220,17 @@ Settings save automatically a moment after you stop typing. There is no OK/Cance
 
 | Setting | Default | Why you would change it |
 |---|---|---|
-| **Interval between checks** | 60 min (5–1440) | This is an *upper bound*, not a metronome. With reset alignment on, checks are pulled earlier to land just after a window rolls over. |
-| **Wake at the next quota reset** | on | Turn off for a strict interval. |
+| **Interval between checks** | 5 min (5–1440) | This is an *upper bound*, not a metronome. Five minutes so a freed window is picked up while there is still time to spend it; a cycle that decides to skip costs one usage lookup, and a tick landing during a run skips rather than queues. |
+| **Wake at the next quota reset** | on | Pulls a check earlier to land just after a window rolls over. At the 5-minute default it rarely has anything to pull — a 5-minute poll already catches a reset within 5 minutes — so it matters mainly if you lengthen the interval. Turn off for a strict interval. |
 | **Grace period after a reset** | 1 min (0–60) | Firing exactly on the boundary races the server's clock and reads the window that is about to close. |
 | **Threshold** | 90% (50–100) | Run only if the selected metric is *strictly below* this. At 89 it runs; at 90 and 91 it skips. |
-| **Compare the threshold against** | Highest of all | `max(5h, 7d, 7d-opus, 7d-sonnet)`. The safe choice — it will not start a run that immediately burns the weekly cap. `Session 5h` and `Weekly 7d` narrow it to one window. |
+| **Compare the threshold against** | Highest of all | `max(5h, 7d, 7d-opus, 7d-sonnet)`. The safe choice — it will not start a run that immediately burns the weekly cap. `Session 5h` and `Weekly 7d` narrow it to one window. The dashboard's *Gate metric* line shows the resulting figure **and which window it came from**, because only the 5h and 7d windows have gauges. |
+| **How the plan states what is left to do** | Detect automatically | Checkbox or milestone (see [Plan formats](#plan-formats)). Detection prefers checkboxes when a plan has both. Set it explicitly if a plan uses a convention detection reads the other way. |
 | **When no usage figure can be read** | Skip the cycle | The other option is *Run*. Skipping is the safe default: silently burning quota because a scrape broke is the worst failure mode this app has. |
 | **Permission mode** | `auto` | Falls back to `acceptEdits` automatically if `auto` is unavailable on your account. `bypassPermissions` is a deliberate third rung with no classifier. |
 | **Launch mode** | Headless (logged) | *Visible terminal* opens a real interactive window in the project directory and copies the prompt to the clipboard, but the app cannot capture output; those runs record as `Launched` with no transcript. |
 | **Session strategy** | Fresh session each run | Fresh keeps context small, which matters when the point is conserving quota — `plan.md` carries the continuity. A session cut short by quota is resumed regardless of this setting. |
-| **Max run duration** | 55 min | Sized so a run cannot outlive a 60-minute slot. On timeout the process tree is killed and the run records as `TimedOut`. |
+| **Max run duration** | 55 min | A ceiling on one run, not on the interval: a 55-minute run simply makes the ticks during it skip. On timeout the process tree is killed and the run records as `TimedOut`. |
 | **Stall timeout** | 10 min | No stream event for this long means a hidden prompt or a hung tool. Separate from the overall timeout. |
 | **Dry run** (Advanced) | off | Goes through the entire cycle, logs the exact resolved command line, and never spawns Claude. Use this first if you are unsure what will be executed. |
 | **Runs to keep in history** (Advanced) | 200 | Pruned on startup; dropped runs' transcripts are deleted with them. |
@@ -264,6 +268,51 @@ detector, because NightShift cannot see inside a window it does not own.
   through `PilotScheduler.StopCurrentRun()`, which cancels that cycle's own linked token. Either
   way the process tree is killed and the run is recorded as "Stopped by the user." rather than
   leaving an unexplained gap in the history.
+
+### Plan formats
+
+A plan file states what is left to do in one of two conventions. NightShift detects which, counts
+progress accordingly, and — this is the part that matters — tells the run how to mark its own work
+done. Get it wrong and the plan never appears to move.
+
+**Checkboxes.** A flat list of task items:
+
+```markdown
+- [x] Wire up the settings store
+- [ ] Add the history view
+- [!] Publish to the store — blocked, no developer account
+```
+
+`- [x]` is done, `- [ ]` is left, `- [!]` is blocked. `*` and `+` bullets work too. A run is told to
+pick up the first unchecked item, tick it, and mark `- [!]` with a reason if it cannot finish.
+
+**Milestones.** Numbered headings, each a body of work:
+
+```markdown
+### M3 — Read-only viewer (M) — **delivered 2026-07-26**
+**Status:** implemented; design in `docs/M3-spec.md`.
+
+### M4 — Text editing (L)
+**Goal:** click-in, caret, type.
+```
+
+A milestone counts as delivered when its heading says `— **delivered …**` or its body carries a
+`**Status:**` (or `**Post-milestone status …**`) line. Blocked is `**Blocked:**` under the heading.
+A run is told to work the lowest-numbered undelivered milestone and to write those markers itself.
+
+Two rules are worth knowing:
+
+- **Everything numbered below the highest delivered milestone counts as delivered too.** Plans
+  routinely start marking milestones only once shipping begins, so the early ones carry no marker
+  at all — and reading them literally reports a nearly finished project as barely started. An
+  explicit `**Blocked:**` always wins over this backfill.
+- **The heading must carry an `M<number>` token** (`## M0` … `###### M15`). That is what keeps
+  ordinary headings like `### Sizing & sequencing notes` from being counted as milestones.
+
+Detection prefers checkboxes when a file has both — this repository's own `plan.md` has `## Phase`
+headings *and* checkboxes, and the checkboxes are the thing that moves. Fenced code blocks are
+skipped in both formats, so a plan documenting its own conventions does not count its examples.
+Override the detection in **Settings › Project › How the plan states what is left to do**.
 
 ---
 
@@ -360,10 +409,20 @@ waiting for a human.
 2. A run already in flight? Otherwise `Skipped(AlreadyRunning)`. Runs are never queued — a run that
    outlasts its interval simply makes the next tick skip.
 3. Preflight has no red rows? Otherwise `Skipped(PreflightFailed)` with the failing check named.
-4. Fetch usage (cached 60s). Unavailable → apply the *When no usage figure can be read* setting.
+4. Fetch usage, bypassing the 60s cache. Unavailable → apply the *When no usage figure can be
+   read* setting. A force run reads usage too — it bypasses the *gate*, not the reading, so the
+   gauges are still right afterwards.
 5. `metric >= threshold` → `Skipped(OverThreshold)`, and the next check is anchored to the
    **blocking** window's reset, not the earliest reset overall.
 6. Otherwise, run.
+7. When the run ends, **read usage again**. That is the figure the dashboard shows and the one the
+   next check is scheduled against; the pre-run snapshot is by then a reading from before Claude
+   spent anything. Mid-run, `rate_limit_event` messages from the CLI move the 5-hour gauge live, at
+   no extra HTTP cost.
+
+Consecutive skips for the same reason write **one** history row, not one per tick. At a 5-minute
+interval a blocked pilot would otherwise put 288 rows a day into a 200-row index and prune every
+real run out of it.
 
 If the run is cut short by quota, the outcome is `RateLimited` — not `Failed`, because nothing is
 broken. The reset time and the resumable session id are persisted to `state.json`, so a machine
@@ -380,7 +439,7 @@ healthy runs as quota-blocked and stall the pilot for hours.
 ## Status
 
 All six phases of `plan.md` are complete: scaffolding, settings and persistence, usage providers,
-execution, scheduler and preflight, UI, and hardening. 659 tests pass (553 Core, 106 Desktop) and
+execution, scheduler and preflight, UI, and hardening. 741 tests pass (628 Core, 113 Desktop) and
 the build runs with warnings as errors.
 
 CI builds and tests every push on a Windows runner and guards the published output against

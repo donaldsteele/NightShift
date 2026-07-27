@@ -78,6 +78,12 @@ public sealed partial class DashboardViewModel : ViewModelBase, IDisposable
     CancellationTokenSource? _manualRunCts;
     DateTimeOffset _lastOutputNotify = DateTimeOffset.MinValue;
     bool _outputDirty;
+
+    /// <summary>
+    /// The newest snapshot, kept so the gate line can be re-rendered when the *metric* changes
+    /// without a fresh usage lookup.
+    /// </summary>
+    UsageSnapshot? _lastSnapshot;
     bool _disposed;
 
     public DashboardViewModel(
@@ -158,6 +164,35 @@ public sealed partial class DashboardViewModel : ViewModelBase, IDisposable
     /// <summary>When usage was last read. Null before the first lookup.</summary>
     [ObservableProperty]
     public partial DateTimeOffset? UsageRetrievedAt { get; private set; }
+
+    /// <summary>
+    /// The gate figure itself, named: <c>"Highest of all — 41% (7d Opus)"</c>.
+    /// </summary>
+    /// <remarks>
+    /// The dashboard used to show only the metric's *name*, and only two of the four windows
+    /// <see cref="UsageMetric.HighestOfAll"/> maximises over have a gauge. A gate driven by the Opus
+    /// or Sonnet window therefore moved nothing on screen, which reads as a value that never
+    /// refreshes.
+    /// </remarks>
+    [ObservableProperty]
+    public partial string GateMetricText { get; private set; } = string.Empty;
+
+    /// <summary>
+    /// The per-model windows that have no gauge: <c>"7d Opus 41% · 7d Sonnet 12%"</c>. Empty when
+    /// the provider reported neither, which is always the case under the ccusage fallback.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasOtherWindows))]
+    public partial string OtherWindowsText { get; private set; } = string.Empty;
+
+    public bool HasOtherWindows => OtherWindowsText.Length > 0;
+
+    /// <summary>
+    /// How old the displayed figures are: <c>"Updated 2 min ago"</c>. Refreshed on the one-second
+    /// tick, so a stale reading is visibly stale rather than indistinguishable from a steady one.
+    /// </summary>
+    [ObservableProperty]
+    public partial string UsageAgeText { get; private set; } = string.Empty;
 
     /// <summary>One line per usage provider: whether its last attempt worked, and why not.</summary>
     public ObservableCollection<string> UsageProviderHealth { get; } = [];
@@ -382,6 +417,7 @@ public sealed partial class DashboardViewModel : ViewModelBase, IDisposable
 
         SessionGauge.RefreshSubCaption(now);
         WeeklyGauge.RefreshSubCaption(now);
+        RefreshUsageAge(now);
 
         IsRunning = _scheduler.IsRunning;
         IsPaused = !_scheduler.IsEnabled;
@@ -487,7 +523,11 @@ public sealed partial class DashboardViewModel : ViewModelBase, IDisposable
     {
         try
         {
-            var snapshot = await _usage.GetUsageAsync(cancellationToken).ConfigureAwait(false);
+            // Forced: the button exists precisely because the figures on screen look stale, and
+            // returning the same cached snapshot would confirm the suspicion rather than answer it.
+            var snapshot = await _usage
+                .GetUsageAsync(forceRefresh: true, cancellationToken)
+                .ConfigureAwait(false);
             ApplyUsage(snapshot);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -706,7 +746,10 @@ public sealed partial class DashboardViewModel : ViewModelBase, IDisposable
             ApplyPreflight(preflight);
         }
 
-        if (cycle.Decision.Usage is { } usage)
+        // Post-run figure first. `Decision.Usage` is what the gate decided on *before* Claude spent
+        // anything, so preferring it would leave the gauges showing a pre-run reading for the whole
+        // interval — the "it never refreshes" symptom.
+        if ((cycle.UsageAfterRun ?? cycle.Decision.Usage) is { } usage)
         {
             ApplyUsage(usage);
         }
@@ -737,10 +780,60 @@ public sealed partial class DashboardViewModel : ViewModelBase, IDisposable
             NotifyOutputChanged(force: true);
         }
 
+        if (progress.Event is ClaudeRateLimitEvent rateLimit)
+        {
+            ApplyLiveRateLimit(rateLimit);
+        }
+
         if (_output.Write(progress.Event))
         {
             NotifyOutputChanged(force: false);
         }
+    }
+
+    /// <summary>
+    /// Folds a mid-run <c>rate_limit_event</c> into the displayed snapshot.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The CLI volunteers the quota it just saw, free and mid-run, and a run is exactly when the
+    /// figures on screen go stale fastest. This is <b>display only</b>: the gate is decided in
+    /// <c>CycleDecisionMaker</c> from a snapshot the scheduler fetched itself, and nothing here
+    /// reaches it.
+    /// </para>
+    /// <para>
+    /// Uses <see cref="ClaudeRateLimitEvent.UtilizationPercent"/>, never
+    /// <see cref="ClaudeRateLimitEvent.UtilizationFraction"/> — the wire value is a fraction 0–1 and
+    /// confusing the two by 100× in an app built around a percentage threshold is the documented
+    /// trap.
+    /// </para>
+    /// </remarks>
+    void ApplyLiveRateLimit(ClaudeRateLimitEvent rateLimit)
+    {
+        if (_lastSnapshot is not { IsAvailable: true } snapshot || rateLimit.UtilizationPercent is not { } percent)
+        {
+            return;
+        }
+
+        var window = new UsageWindow(percent, rateLimit.ResetsAt);
+
+        // The wire names are Claude Code's, not ours; anything else is a window we have no gauge for
+        // and no safe place to put.
+        var updated = rateLimit.RateLimitType switch
+        {
+            "five_hour" => snapshot with { FiveHour = window },
+            "seven_day" => snapshot with { SevenDay = window },
+            "seven_day_opus" => snapshot with { SevenDayOpus = window },
+            "seven_day_sonnet" => snapshot with { SevenDaySonnet = window },
+            _ => null,
+        };
+
+        if (updated is null)
+        {
+            return;
+        }
+
+        ApplyUsage(updated with { RetrievedAt = _time.GetUtcNow() });
     }
 
     // ── Projection helpers ─────────────────────────────────────────────────────────────────────
@@ -758,12 +851,18 @@ public sealed partial class DashboardViewModel : ViewModelBase, IDisposable
             PlanFileName = normalized.PlanFileName;
             ThresholdPercent = normalized.ThresholdPercent;
             UsageMetric = normalized.UsageMetric;
+
+            // The gate line names the winning window, so switching metric changes it even though no
+            // new usage figure arrived.
+            ApplyGateMetric(_lastSnapshot);
+
             OpenProjectDirectoryCommand.NotifyCanExecuteChanged();
         });
     }
 
     void ApplyUsage(UsageSnapshot snapshot)
     {
+        _lastSnapshot = snapshot;
         UsageSource = snapshot.Source;
         UsageRetrievedAt = snapshot.RetrievedAt;
 
@@ -780,6 +879,9 @@ public sealed partial class DashboardViewModel : ViewModelBase, IDisposable
             WeeklyGauge.Update(snapshot.SevenDay, snapshot.IsApproximate, snapshot.UnavailableReason, now);
         }
 
+        ApplyGateMetric(snapshot);
+        RefreshUsageAge(now);
+
         UsageProviderHealth.Clear();
         foreach (var health in _usage.Health)
         {
@@ -787,6 +889,57 @@ public sealed partial class DashboardViewModel : ViewModelBase, IDisposable
                 ? $"{health.Source}: healthy"
                 : $"{health.Source}: {health.LastReason ?? "unavailable"}");
         }
+    }
+
+    /// <summary>
+    /// Renders the gate line and the no-gauge windows from the newest snapshot. Called on every
+    /// usage update and again whenever the metric setting changes, so the line always describes the
+    /// comparison the scheduler would make right now.
+    /// </summary>
+    void ApplyGateMetric(UsageSnapshot? snapshot)
+    {
+        var label = UsageMetricText.Describe(UsageMetric);
+
+        if (snapshot is null)
+        {
+            GateMetricText = label;
+            OtherWindowsText = string.Empty;
+            return;
+        }
+
+        var reading = snapshot.SelectDetailed(UsageMetric);
+
+        // Unknown is spelled out rather than left blank: a blank gate figure beside two drawn gauges
+        // reads as 0%, which is the exact misreading the usage gate exists to prevent (plan.md §4.3).
+        GateMetricText = reading is { Percent: { } percent, WindowName: { } window }
+            ? $"{label} — {percent:0.##}% ({window})"
+            : $"{label} — unknown";
+
+        // Only the two per-model windows: the 5h and 7d ones already have gauges above this line.
+        var others = UsageMetricSelector.NamedWindows(snapshot)
+            .Where(pair => pair.Window is not null
+                && pair.Name is UsageMetricSelector.SevenDayOpusName or UsageMetricSelector.SevenDaySonnetName)
+            .Select(pair => $"{pair.Name} {pair.Window!.UtilizationPercent:0.##}%");
+
+        OtherWindowsText = string.Join(" · ", others);
+    }
+
+    /// <summary>
+    /// "Updated 2 min ago". Recomputed on the tick rather than only on refresh, because the whole
+    /// point of the line is to make an *unchanging* figure visibly age.
+    /// </summary>
+    void RefreshUsageAge(DateTimeOffset now)
+    {
+        if (UsageRetrievedAt is not { } retrievedAt)
+        {
+            UsageAgeText = string.Empty;
+            return;
+        }
+
+        var age = now - retrievedAt;
+        UsageAgeText = age < TimeSpan.FromSeconds(10)
+            ? "Updated just now"
+            : $"Updated {TimeSpanText.Describe(age)} ago";
     }
 
     void ApplyPreflight(PreflightResult result)

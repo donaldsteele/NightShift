@@ -32,7 +32,7 @@ public sealed class CcusageProviderTests
     }
 
     static Task<UsageSnapshot> RunAsync(FakeRunner runner, string commandOverride = "") =>
-        Provider(runner, commandOverride).GetUsageAsync(CancellationToken.None);
+        Provider(runner, commandOverride).GetUsageAsync(cancellationToken: CancellationToken.None);
 
     // ── Envelope shapes ────────────────────────────────────────────────────────────────────────
 

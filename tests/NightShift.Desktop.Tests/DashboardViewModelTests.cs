@@ -316,6 +316,157 @@ public class DashboardViewModelTests
     }
 
     [Fact]
+    public async Task TheGateLineNamesTheWindowTheThresholdIsActuallyComparedAgainst()
+    {
+        // Neither per-model window has a gauge, so a gate driven by Opus used to move nothing on
+        // screen at all.
+        using var harness = new ViewModelHarness();
+        harness.UsageProvider.Snapshot = new UsageSnapshot(
+            new UsageWindow(12, null),
+            new UsageWindow(20, null),
+            new UsageWindow(77, null),
+            new UsageWindow(41, null),
+            UsageSource.OAuth,
+            IsApproximate: false,
+            harness.Time.GetUtcNow());
+
+        using var dashboard = harness.CreateDashboard();
+        await dashboard.RefreshUsageCommand.ExecuteAsync(null);
+
+        Assert.Equal("Highest of all — 77% (7d Opus)", dashboard.GateMetricText);
+        Assert.Equal("7d Opus 77% · 7d Sonnet 41%", dashboard.OtherWindowsText);
+        Assert.True(dashboard.HasOtherWindows);
+        Assert.Equal("Updated just now", dashboard.UsageAgeText);
+    }
+
+    [Fact]
+    public async Task WithNoPerModelWindowsThereIsNothingExtraToShow()
+    {
+        using var harness = new ViewModelHarness();
+        harness.UsageProvider.Snapshot = harness.Snapshot(55);
+
+        using var dashboard = harness.CreateDashboard();
+        await dashboard.RefreshUsageCommand.ExecuteAsync(null);
+
+        Assert.Equal(string.Empty, dashboard.OtherWindowsText);
+        Assert.False(dashboard.HasOtherWindows);
+    }
+
+    [Fact]
+    public async Task AnUnknownGateFigureSaysSoRatherThanShowingNothing()
+    {
+        // A blank figure beside two drawn gauges reads as 0%, the exact misreading the gate exists
+        // to prevent.
+        using var harness = new ViewModelHarness();
+        harness.UsageProvider.Snapshot =
+            UsageSnapshot.Unavailable("the endpoint returned 401", harness.Time.GetUtcNow());
+
+        using var dashboard = harness.CreateDashboard();
+        await dashboard.RefreshUsageCommand.ExecuteAsync(null);
+
+        Assert.Equal("Highest of all — unknown", dashboard.GateMetricText);
+    }
+
+    [Fact]
+    public async Task TheUsageAgeCountsUpOnTheTick()
+    {
+        using var harness = new ViewModelHarness();
+        harness.UsageProvider.Snapshot = harness.Snapshot(55);
+
+        using var dashboard = harness.CreateDashboard();
+        await dashboard.RefreshUsageCommand.ExecuteAsync(null);
+        Assert.Equal("Updated just now", dashboard.UsageAgeText);
+
+        harness.Time.Advance(TimeSpan.FromMinutes(12));
+        dashboard.Tick();
+
+        Assert.Equal("Updated 12m ago", dashboard.UsageAgeText);
+    }
+
+    [Fact]
+    public async Task AMidRunRateLimitEventMovesTheGaugeWithoutAnotherLookup()
+    {
+        // The CLI volunteers the quota it just saw, free, at exactly the moment the figures on screen
+        // go stale fastest. Display only — the gate is decided in Core from its own snapshot. Asserted
+        // while the run is still held open, because the post-run refresh replaces it afterwards.
+        using var previous = new InlineSynchronizationContextScope();
+
+        using var harness = new ViewModelHarness();
+        harness.PreflightPasses();
+        harness.UsageProvider.Snapshot = harness.Snapshot(20);
+        harness.Runner.Gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        harness.Runner.Events.Add(new ClaudeRateLimitEvent("{}")
+        {
+            RateLimitType = "five_hour",
+            // The wire value is a fraction; UtilizationPercent is the converted one. Confusing the
+            // two by 100x is the documented trap.
+            UtilizationFraction = 0.64,
+            UtilizationPercent = 64,
+        });
+
+        using var dashboard = harness.CreateDashboard();
+        await dashboard.RefreshUsageCommand.ExecuteAsync(null);
+        var lookups = harness.UsageProvider.Calls;
+
+        var run = dashboard.RunNowCommand.ExecuteAsync(null);
+        await harness.Runner.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(64, dashboard.SessionGauge.Percent);
+        Assert.Equal("Highest of all — 64% (5h)", dashboard.GateMetricText);
+        Assert.Equal(lookups + 1, harness.UsageProvider.Calls);   // the pre-run read, and nothing more
+
+        harness.Runner.Gate.SetResult();
+        await run;
+    }
+
+    [Fact]
+    public async Task AnUnknownRateLimitWindowIsIgnoredRatherThanGuessedAt()
+    {
+        using var previous = new InlineSynchronizationContextScope();
+
+        using var harness = new ViewModelHarness();
+        harness.PreflightPasses();
+        harness.UsageProvider.Snapshot = harness.Snapshot(20);
+        harness.Runner.Gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        harness.Runner.Events.Add(new ClaudeRateLimitEvent("{}")
+        {
+            RateLimitType = "something_new",
+            UtilizationPercent = 99,
+        });
+
+        using var dashboard = harness.CreateDashboard();
+        await dashboard.RefreshUsageCommand.ExecuteAsync(null);
+
+        var run = dashboard.RunNowCommand.ExecuteAsync(null);
+        await harness.Runner.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(20, dashboard.SessionGauge.Percent);
+
+        harness.Runner.Gate.SetResult();
+        await run;
+    }
+
+    [Fact]
+    public async Task TheGaugesShowThePostRunFigureNotThePreRunOne()
+    {
+        // A run that spent 30% of the window used to leave an hour-old reading on screen until the
+        // next cycle or a manual refresh.
+        using var previous = new InlineSynchronizationContextScope();
+
+        using var harness = new ViewModelHarness();
+        harness.PreflightPasses();
+        harness.UsageProvider.Snapshot = harness.Snapshot(20);
+
+        using var dashboard = harness.CreateDashboard();
+
+        var run = dashboard.RunNowCommand.ExecuteAsync(null);
+        harness.UsageProvider.Snapshot = harness.Snapshot(58);
+        await run;
+
+        Assert.Equal(58, dashboard.SessionGauge.Percent);
+    }
+
+    [Fact]
     public async Task ACcusageSnapshotIsMarkedApproximate()
     {
         using var harness = new ViewModelHarness();

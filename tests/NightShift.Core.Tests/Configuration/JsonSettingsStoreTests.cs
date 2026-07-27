@@ -1,5 +1,7 @@
 using System.Text.Json;
 using NightShift.Core.Configuration;
+using NightShift.Core.Execution;
+using NightShift.Core.Serialization;
 using NightShift.Core.Usage;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -129,6 +131,62 @@ public sealed class JsonSettingsStoreTests : IDisposable
         Assert.Equal(90, loaded.ThresholdPercent);            // default filled in
         Assert.Equal(UsageMetric.HighestOfAll, loaded.UsageMetric);
         Assert.False(File.Exists(_paths.SettingsFile + JsonSettingsStore.CorruptBackupSuffix));
+    }
+
+    [Fact]
+    public async Task A_version_1_file_still_holding_the_old_default_prompt_is_migrated()
+    {
+        // Without this an existing install would never see `{planConventions}`, so a milestone plan
+        // would get checkbox instructions and no run could ever mark its work done.
+        _paths.EnsureCreated();
+        await File.WriteAllTextAsync(
+            _paths.SettingsFile,
+            JsonSerializer.Serialize(
+                new PilotSettings { SettingsVersion = 1, PromptTemplate = PilotSettings.LegacyPromptTemplateV1 },
+                NightShiftJsonContext.Default.PilotSettings));
+
+        var loaded = await CreateStore().LoadAsync();
+
+        Assert.Equal(PilotSettings.DefaultPromptTemplate, loaded.PromptTemplate);
+        Assert.Equal(PilotSettings.CurrentVersion, loaded.SettingsVersion);
+        Assert.Contains(PromptBuilder.PlanConventionsToken, loaded.PromptTemplate, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_version_1_file_with_a_hand_written_prompt_keeps_it()
+    {
+        const string Mine = "Do exactly what {planFile} says and nothing else.";
+
+        _paths.EnsureCreated();
+        await File.WriteAllTextAsync(
+            _paths.SettingsFile,
+            JsonSerializer.Serialize(
+                new PilotSettings { SettingsVersion = 1, PromptTemplate = Mine },
+                NightShiftJsonContext.Default.PilotSettings));
+
+        var loaded = await CreateStore().LoadAsync();
+
+        Assert.Equal(Mine, loaded.PromptTemplate);
+        Assert.Equal(PilotSettings.CurrentVersion, loaded.SettingsVersion);
+    }
+
+    [Fact]
+    public async Task The_old_default_prompt_is_recognised_whatever_its_line_endings()
+    {
+        // A settings file written on another machine carries that machine's endings; an untouched
+        // template must not look hand-written because of them.
+        _paths.EnsureCreated();
+        await File.WriteAllTextAsync(
+            _paths.SettingsFile,
+            JsonSerializer.Serialize(
+                new PilotSettings
+                {
+                    SettingsVersion = 1,
+                    PromptTemplate = PilotSettings.LegacyPromptTemplateV1.ReplaceLineEndings("\r\n"),
+                },
+                NightShiftJsonContext.Default.PilotSettings));
+
+        Assert.Equal(PilotSettings.DefaultPromptTemplate, (await CreateStore().LoadAsync()).PromptTemplate);
     }
 
     [Fact]

@@ -48,8 +48,16 @@ sealed class FakeUsageProvider : IUsageProvider
 
     public UsageSnapshot Snapshot { get; set; }
 
-    public Task<UsageSnapshot> GetUsageAsync(CancellationToken cancellationToken = default) =>
-        Task.FromResult(Snapshot);
+    /// <summary>How many times a caller asked for figures — used to assert refresh behaviour.</summary>
+    public int Calls { get; private set; }
+
+    public Task<UsageSnapshot> GetUsageAsync(
+        bool forceRefresh = false,
+        CancellationToken cancellationToken = default)
+    {
+        Calls++;
+        return Task.FromResult(Snapshot);
+    }
 }
 
 /// <summary>A preflight checker whose result the test sets.</summary>

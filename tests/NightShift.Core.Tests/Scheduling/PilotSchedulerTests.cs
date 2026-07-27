@@ -109,7 +109,7 @@ public sealed class PilotSchedulerTests : IDisposable
     {
         var provider = Substitute.For<IUsageProvider>();
         provider.Source.Returns(UsageSource.OAuth);
-        provider.GetUsageAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult(snapshot));
+        provider.GetUsageAsync(Arg.Any<bool>(), Arg.Any<CancellationToken>()).Returns(Task.FromResult(snapshot));
 
         return new CompositeUsageProvider(
             [provider],
@@ -230,6 +230,132 @@ public sealed class PilotSchedulerTests : IDisposable
         Assert.Equal(RunOutcome.Skipped, skip.Outcome);
         Assert.Equal(SkipReason.OverThreshold, skip.SkipReason);
         Assert.NotNull(skip.UsageAtStart);
+    }
+
+    [Fact]
+    public async Task Repeated_identical_skips_collapse_to_one_history_row()
+    {
+        // At the five-minute default a blocked pilot would otherwise write 288 rows a day into a
+        // 200-row index and prune every real run out of it.
+        var scheduler = CreateScheduler(Usage(95));
+
+        await scheduler.RunNowAsync();
+        await scheduler.RunNowAsync();
+        await scheduler.RunNowAsync();
+
+        var skip = Assert.Single(await _history.ReadAllAsync());
+        Assert.Equal(SkipReason.OverThreshold, skip.SkipReason);
+    }
+
+    [Fact]
+    public async Task A_recorded_run_lets_the_next_skip_be_written_again()
+    {
+        var scheduler = CreateScheduler(Usage(95));
+        await scheduler.RunNowAsync();
+
+        // A forced run bypasses the gate, so it records a real run between the two skips.
+        await scheduler.RunNowAsync(bypassUsageCheck: true);
+        await scheduler.RunNowAsync();
+
+        // Two rows, not one: the run in between means the second quiet stretch is its own story.
+        // (The stub runner writes no history of its own — a real runner appends its own record.)
+        var records = await _history.ReadAllAsync();
+        Assert.Equal(2, records.Count(r => r.Outcome == RunOutcome.Skipped));
+    }
+
+    [Fact]
+    public async Task A_completed_run_re_reads_usage_afterwards()
+    {
+        // Whatever the run just spent is not in the pre-run snapshot, so the dashboard would show an
+        // hour-old figure for the whole interval — the "it never refreshes" symptom.
+        var provider = Substitute.For<IUsageProvider>();
+        provider.Source.Returns(UsageSource.OAuth);
+
+        var calls = 0;
+        provider.GetUsageAsync(Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(_ => Task.FromResult(Usage(++calls == 1 ? 20 : 55)));
+
+        var scheduler = new PilotScheduler(
+            SettingsStore(),
+            new CompositeUsageProvider(
+                [provider], SettingsStore(), NullLogger<CompositeUsageProvider>.Instance, _time),
+            PassingPreflight(),
+            _gate,
+            _stateStore,
+            _history,
+            [_runner],
+            NullLogger<PilotScheduler>.Instance,
+            _time);
+
+        var completed = await scheduler.RunNowAsync();
+
+        Assert.Equal(2, calls);
+        Assert.Equal(20, completed.Decision.Usage?.FiveHour?.UtilizationPercent);
+        Assert.Equal(55, completed.UsageAfterRun?.FiveHour?.UtilizationPercent);
+    }
+
+    [Fact]
+    public async Task A_skipped_cycle_has_no_post_run_snapshot()
+    {
+        var completed = await CreateScheduler(Usage(95)).RunNowAsync();
+
+        Assert.Null(completed.UsageAfterRun);
+        Assert.NotNull(completed.Decision.Usage);
+    }
+
+    [Fact]
+    public async Task A_forced_run_still_reads_usage_for_display()
+    {
+        // Force bypasses the gate, not the reading: a forced run that left the gauges untouched was
+        // the other half of "the number never refreshes".
+        var completed = await CreateScheduler(Usage(99)).RunNowAsync(bypassUsageCheck: true);
+
+        Assert.True(completed.Decision.ShouldRun);
+        Assert.Equal(99, completed.Decision.Usage?.FiveHour?.UtilizationPercent);
+        Assert.Equal(99, completed.Decision.MetricPercent);
+        Assert.NotNull(completed.UsageAfterRun);
+    }
+
+    [Fact]
+    public async Task The_resolved_plan_format_reaches_the_runner()
+    {
+        // Preflight is the only thing that has read the plan file, so it is the only thing that knows
+        // what `Auto` resolved to — and the prompt cannot state the right conventions without it.
+        var checker = Substitute.For<IPreflightChecker>();
+        checker.CheckAsync(Arg.Any<PilotSettings>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new PreflightResult([], Start, null, null, null, PlanFormat.Milestone)));
+
+        var runner = new CapturingRunner();
+        var scheduler = new PilotScheduler(
+            SettingsStore(),
+            UsageProvider(Usage(20)),
+            checker,
+            _gate,
+            _stateStore,
+            _history,
+            [runner],
+            NullLogger<PilotScheduler>.Instance,
+            _time);
+
+        await scheduler.RunNowAsync();
+
+        Assert.Equal(PlanFormat.Milestone, runner.LastSettings?.PlanFormat);
+    }
+
+    sealed class CapturingRunner : IClaudeRunner
+    {
+        public PilotSettings? LastSettings { get; private set; }
+
+        public LaunchMode Mode => LaunchMode.Headless;
+
+        public Task<RunRecord> RunAsync(
+            PilotSettings settings,
+            IProgress<RunProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            LastSettings = settings;
+            return Task.FromResult(RunRecord.Start(DateTimeOffset.UnixEpoch) with { Outcome = RunOutcome.Success });
+        }
     }
 
     [Fact]
@@ -635,7 +761,7 @@ public sealed class PilotSchedulerTests : IDisposable
         var utilization = 20d;
         var provider = Substitute.For<IUsageProvider>();
         provider.Source.Returns(UsageSource.OAuth);
-        provider.GetUsageAsync(Arg.Any<CancellationToken>())
+        provider.GetUsageAsync(Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(_ => Task.FromResult(Usage(utilization)));
 
         var composite = new CompositeUsageProvider(

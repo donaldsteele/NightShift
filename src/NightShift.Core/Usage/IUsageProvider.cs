@@ -15,5 +15,13 @@ public interface IUsageProvider
     /// <summary>
     /// The current usage figures, or an unavailable snapshot explaining why there are none.
     /// </summary>
-    Task<UsageSnapshot> GetUsageAsync(CancellationToken cancellationToken = default);
+    /// <param name="forceRefresh">
+    /// Ignore any cached response and go to the source. A provider without a cache ignores this.
+    /// <para>
+    /// "Force" means force past the <em>cache</em>, never past a rate limit: an active 429 backoff
+    /// or a latched 401 still short-circuits, because hammering an endpoint that just said no is the
+    /// failure this app is built to avoid (plan.md §4.1).
+    /// </para>
+    /// </param>
+    Task<UsageSnapshot> GetUsageAsync(bool forceRefresh = false, CancellationToken cancellationToken = default);
 }

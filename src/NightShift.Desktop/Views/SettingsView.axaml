@@ -91,6 +91,20 @@
                      HorizontalAlignment="Left"
                      Text="{Binding PlanFileName, Mode=TwoWay}"
                      PlaceholderText="plan.md" />
+
+            <TextBlock Text="How the plan states what is left to do" Classes="field" />
+            <ComboBox Width="280"
+                      HorizontalAlignment="Left"
+                      ItemsSource="{Binding PlanFormatOptions}"
+                      SelectedItem="{Binding PlanFormat, Mode=TwoWay}">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="cfg:PlanFormat">
+                  <TextBlock Text="{Binding Path=., Converter={StaticResource SettingsLabel}}" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+            <TextBlock Text="Decides the progress tally and what a run is told to mark when it finishes. Detection prefers checkboxes when a plan has both."
+                       Classes="caption" />
           </StackPanel>
         </Border>
 

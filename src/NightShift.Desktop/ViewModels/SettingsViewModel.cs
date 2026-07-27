@@ -34,6 +34,13 @@ public sealed partial class SettingsViewModel : ViewModelBase, IDisposable
     /// <summary>Default quiet period before an edit is written.</summary>
     public static readonly TimeSpan DefaultDebounceInterval = TimeSpan.FromMilliseconds(600);
 
+    /// <summary>
+    /// The one authority for what an unconfigured value is. Property initialisers below read from
+    /// this rather than repeating a literal, because <see cref="PilotSettings"/>'s own remarks state
+    /// that nothing else may invent its own defaults.
+    /// </summary>
+    static readonly PilotSettings Defaults = new();
+
     /// <summary>The warning printed beside any detected <c>permissions.ask</c> rule (plan.md §9.2).</summary>
     public const string PermissionsAskNote =
         "These will hang a run. An ask rule is evaluated before the auto-mode classifier and always " +
@@ -49,7 +56,7 @@ public sealed partial class SettingsViewModel : ViewModelBase, IDisposable
     /// </summary>
     public static readonly IReadOnlySet<string> PersistedProperties = new HashSet<string>(StringComparer.Ordinal)
     {
-        nameof(ProjectDirectory), nameof(PlanFileName),
+        nameof(ProjectDirectory), nameof(PlanFileName), nameof(PlanFormat),
         nameof(IntervalMinutes), nameof(RunOnStartup), nameof(StartWithWindows), nameof(StartMinimized),
         nameof(AlignToQuotaReset), nameof(QuotaResetGraceMinutes),
         nameof(ThresholdPercent), nameof(UsageMetric), nameof(OnUsageUnavailable),
@@ -165,10 +172,22 @@ public sealed partial class SettingsViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     public partial string PlanFileName { get; set; } = "plan.md";
 
+    /// <inheritdoc cref="PilotSettings.PlanFormat"/>
+    [ObservableProperty]
+    public partial PlanFormat PlanFormat { get; set; } = Defaults.PlanFormat;
+
+    public IReadOnlyList<PlanFormat> PlanFormatOptions { get; } =
+        [PlanFormat.Auto, PlanFormat.Checkbox, PlanFormat.Milestone];
+
     // ── Schedule ───────────────────────────────────────────────────────────────────────────────
 
+    /// <inheritdoc cref="PilotSettings.IntervalMinutes"/>
+    /// <remarks>
+    /// Mirrored off <see cref="PilotSettings"/> rather than restated: the record's own remarks say
+    /// nothing else may invent its own default, and a duplicated literal is how the two drift.
+    /// </remarks>
     [ObservableProperty]
-    public partial int IntervalMinutes { get; set; } = 60;
+    public partial int IntervalMinutes { get; set; } = Defaults.IntervalMinutes;
 
     public static int IntervalMinimum => PilotSettings.MinIntervalMinutes;
 
@@ -678,7 +697,7 @@ public sealed partial class SettingsViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        if (name is nameof(CavemanLevel) or nameof(PromptTemplate) or nameof(PlanFileName))
+        if (name is nameof(CavemanLevel) or nameof(PromptTemplate) or nameof(PlanFileName) or nameof(PlanFormat))
         {
             RefreshPromptPreview();
         }
@@ -709,6 +728,7 @@ public sealed partial class SettingsViewModel : ViewModelBase, IDisposable
     {
         ProjectDirectory = ProjectDirectory,
         PlanFileName = PlanFileName,
+        PlanFormat = PlanFormat,
         IntervalMinutes = IntervalMinutes,
         RunOnStartup = RunOnStartup,
         AlignToQuotaReset = AlignToQuotaReset,
@@ -749,6 +769,7 @@ public sealed partial class SettingsViewModel : ViewModelBase, IDisposable
         {
             ProjectDirectory = normalized.ProjectDirectory;
             PlanFileName = normalized.PlanFileName;
+            PlanFormat = normalized.PlanFormat;
             IntervalMinutes = normalized.IntervalMinutes;
             RunOnStartup = normalized.RunOnStartup;
             AlignToQuotaReset = normalized.AlignToQuotaReset;
@@ -865,7 +886,10 @@ public sealed partial class SettingsViewModel : ViewModelBase, IDisposable
 
     void RefreshPromptPreview()
     {
-        PromptPreview = PromptBuilder.Build(CavemanLevel, PromptTemplate, PlanFileName);
+        // `Auto` reaches PromptBuilder unresolved here on purpose: the preview must not read the plan
+        // file on every keystroke, and it falls back to the checkbox conventions. Picking a format
+        // explicitly shows exactly what that format's runs will say.
+        PromptPreview = PromptBuilder.Build(CavemanLevel, PromptTemplate, PlanFileName, PlanFormat);
         OnPropertyChanged(nameof(IsPromptTemplateDefault));
     }
 
@@ -910,12 +934,19 @@ public sealed partial class SettingsViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>Display labels for the enum dropdowns, so a view converter never invents its own.</summary>
-    public static string Describe(UsageMetric metric) => metric switch
+    /// <remarks>
+    /// This one delegates to Core: the dashboard renders the same label on its gate line, and the
+    /// two must not drift.
+    /// </remarks>
+    public static string Describe(UsageMetric metric) => UsageMetricText.Describe(metric);
+
+    /// <inheritdoc cref="Describe(UsageMetric)"/>
+    public static string Describe(PlanFormat format) => format switch
     {
-        UsageMetric.HighestOfAll => "Highest of all",
-        UsageMetric.FiveHour => "Session (5h)",
-        UsageMetric.SevenDay => "Weekly (7d)",
-        _ => metric.ToString(),
+        PlanFormat.Auto => "Detect automatically",
+        PlanFormat.Checkbox => "Checkboxes (`- [ ]`)",
+        PlanFormat.Milestone => "Milestones (`## M1 — …`)",
+        _ => format.ToString(),
     };
 
     /// <inheritdoc cref="Describe(UsageMetric)"/>

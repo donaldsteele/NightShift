@@ -124,11 +124,51 @@ public sealed class JsonSettingsStore : ISettingsStore
                 "Migrating settings from version {From} to {To}.",
                 fileVersion,
                 PilotSettings.CurrentVersion);
-            normalized = normalized with { SettingsVersion = PilotSettings.CurrentVersion };
+
+            normalized = Migrate(normalized, fileVersion) with { SettingsVersion = PilotSettings.CurrentVersion };
         }
 
         return (normalized, needsRewrite);
     }
+
+    /// <summary>
+    /// Schema upgrades that need more than a version bump.
+    /// </summary>
+    /// <remarks>
+    /// <b>v1 → v2: the prompt template.</b> v2's default template carries a
+    /// <c>{planConventions}</c> token, which is how a run learns whether to tick checkboxes or mark
+    /// milestones delivered. A settings file written by v1 holds the whole v1 default as a literal
+    /// string, so without this the token would never appear for an existing install and every
+    /// milestone plan would get checkbox instructions. Only a template that still matches
+    /// <see cref="PilotSettings.LegacyPromptTemplateV1"/> exactly is replaced — a user who edited
+    /// their prompt keeps it, token or no token.
+    /// </remarks>
+    PilotSettings Migrate(PilotSettings settings, int fileVersion)
+    {
+        if (fileVersion < 2 && IsLegacyDefaultPrompt(settings.PromptTemplate))
+        {
+            _logger.LogInformation(
+                "The stored prompt template is the version 1 default; replacing it with the current one.");
+            return settings with { PromptTemplate = PilotSettings.DefaultPromptTemplate };
+        }
+
+        return settings;
+    }
+
+    /// <summary>
+    /// Whether a stored template is the untouched v1 default. Line endings are normalised first: the
+    /// constant carries whatever this file was checked out with, and a settings file written on
+    /// another machine may carry the other, which would otherwise make an untouched template look
+    /// hand-written.
+    /// </summary>
+    static bool IsLegacyDefaultPrompt(string? template) =>
+        string.Equals(
+            NormalizeNewLines(template),
+            NormalizeNewLines(PilotSettings.LegacyPromptTemplateV1),
+            StringComparison.Ordinal);
+
+    static string NormalizeNewLines(string? text) =>
+        (text ?? string.Empty).Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
 
     PilotSettings Quarantine(string file, Exception? reason)
     {

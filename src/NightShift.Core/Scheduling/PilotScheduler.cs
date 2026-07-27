@@ -22,7 +22,17 @@ public enum CycleTrigger
 }
 
 /// <summary>One completed cycle, whether it ran or skipped.</summary>
-public sealed record CycleCompleted(CycleTrigger Trigger, CycleDecision Decision, RunRecord? Record);
+/// <param name="UsageAfterRun">
+/// Usage re-read once the run finished, or null when the cycle never launched anything (or the
+/// re-read failed). <see cref="CycleDecision"/>'s snapshot is the figure the gate <em>decided</em>
+/// on, taken before the run; this is what the quota looks like now that the run has spent some of
+/// it. The dashboard prefers this one, so gauges stop showing an hour-old reading.
+/// </param>
+public sealed record CycleCompleted(
+    CycleTrigger Trigger,
+    CycleDecision Decision,
+    RunRecord? Record,
+    UsageSnapshot? UsageAfterRun = null);
 
 /// <summary>
 /// Wakes on an interval, decides whether to run, and never lets two runs overlap (plan.md §6).
@@ -47,6 +57,12 @@ public sealed class PilotScheduler : BackgroundService
     /// Reset times are absolute, so a snapshot stays useful for anchoring long after it was taken.
     /// </summary>
     UsageSnapshot? _lastUsage;
+
+    /// <summary>
+    /// The reason of the last skip written to history, so a run of identical skips collapses to one
+    /// row. Cleared whenever a real run is recorded. See <c>RecordSkipAsync</c>.
+    /// </summary>
+    SkipReason? _lastRecordedSkip;
 
     /// <summary>Cancellation for the run in flight, so <see cref="StopCurrentRun"/> can reach it.</summary>
     CancellationTokenSource? _currentRunCts;
@@ -200,7 +216,7 @@ public sealed class PilotScheduler : BackgroundService
             // after a cycle has already run, so the first interval after every restart is blind.
             try
             {
-                _lastUsage = await _usage.GetUsageAsync(stoppingToken).ConfigureAwait(false);
+                _lastUsage = await _usage.GetUsageAsync(cancellationToken: stoppingToken).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -230,7 +246,9 @@ public sealed class PilotScheduler : BackgroundService
             await ScheduleNextAsync(
                 _settings.Current,
                 cycle.Decision.ResumeAt,
-                cycle.Decision.Usage ?? _lastUsage,
+                // Post-run first: its reset times are the newest we have, and a window that rolled
+                // over during the run is exactly what the next check wants to be anchored to.
+                cycle.UsageAfterRun ?? cycle.Decision.Usage ?? _lastUsage,
                 cycle.Record,
                 stoppingToken).ConfigureAwait(false);
         }
@@ -406,27 +424,20 @@ public sealed class PilotScheduler : BackgroundService
             return Complete(trigger, blocked, null);
         }
 
-        CycleDecision decision;
-        if (trigger == CycleTrigger.ForceRun)
-        {
-            decision = CycleDecision.Run(null, null, "Force run: the usage check was bypassed by the user.");
-        }
-        else
-        {
-            UsageSnapshot usage;
-            try
-            {
-                usage = await _usage.GetUsageAsync(cancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger.LogError(ex, "Usage lookup threw; treating usage as unavailable.");
-                usage = UsageSnapshot.Unavailable(ex.Message, _timeProvider.GetUtcNow());
-            }
+        // Preflight has just read the plan file, so it is the only thing that knows what `Auto`
+        // resolved to. Pinning it onto the settings the runner receives is what lets the prompt state
+        // checkbox or milestone conventions without every runner learning to detect it itself.
+        settings = settings with { PlanFormat = preflight.PlanFormat };
 
-            _lastUsage = usage;
-            decision = CycleDecisionMaker.FromUsage(settings, usage);
-        }
+        // Always read usage, even for a force run. Force bypasses the *gate*, not the reading: a
+        // forced run that left the gauges untouched was the other half of "the number never
+        // refreshes", and the reset times feed the next schedule either way.
+        var usage = await ReadUsageAsync("before the run", cancellationToken).ConfigureAwait(false);
+        _lastUsage = usage;
+
+        var decision = trigger == CycleTrigger.ForceRun
+            ? CycleDecision.Run(usage, usage.Select(settings.UsageMetric), "Force run: the usage check was bypassed by the user.")
+            : CycleDecisionMaker.FromUsage(settings, usage);
 
         if (!decision.ShouldRun)
         {
@@ -501,15 +512,59 @@ public sealed class PilotScheduler : BackgroundService
         _state.QuotaResumesAtUtc = record.Outcome == RunOutcome.RateLimited ? record.RateLimitResetsAt : null;
         await _stateStore.SaveAsync(_state, cancellationToken).ConfigureAwait(false);
 
-        return Complete(trigger, decision, record);
+        // The run just spent quota, so everything read before it is now wrong. Re-read before this
+        // cycle is declared over: the dashboard shows the result, and `ScheduleNextAsync` anchors the
+        // next check against the reset times we have just confirmed rather than hour-old ones.
+        // CancellationToken.None because a shutdown must not leave the figures wrong — the call is
+        // bounded by the HTTP client's own timeout.
+        var usageAfterRun = await ReadUsageAsync("after the run", CancellationToken.None).ConfigureAwait(false);
+        _lastUsage = usageAfterRun;
+
+        // A run recorded is the end of a quiet stretch; the next skip deserves its own history line.
+        _lastRecordedSkip = null;
+
+        return Complete(trigger, decision, record, usageAfterRun);
     }
 
     IClaudeRunner? SelectRunner(LaunchMode mode) => _runners.FirstOrDefault(r => r.Mode == mode);
 
+    /// <summary>
+    /// One usage lookup that reports rather than throws, forcing past the provider cache.
+    /// </summary>
+    /// <remarks>
+    /// Forced because both call sites exist to answer "what is the quota <em>now</em>": serving a
+    /// cached figure to the check that decides whether to burn an hour of quota, or to the refresh
+    /// that exists because the last figure looked stale, defeats the point. The cache still protects
+    /// against bursts from the UI. Rate-limit backoff is unaffected — see
+    /// <see cref="IUsageProvider.GetUsageAsync"/>.
+    /// </remarks>
+    async Task<UsageSnapshot> ReadUsageAsync(string when, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await _usage.GetUsageAsync(forceRefresh: true, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "Usage lookup {When} threw; treating usage as unavailable.", when);
+            return UsageSnapshot.Unavailable(ex.Message, _timeProvider.GetUtcNow());
+        }
+    }
+
     async Task RecordSkipAsync(CycleDecision decision, CancellationToken cancellationToken)
     {
-        // Skips are recorded so the history explains a quiet night, but a skip for "already running"
-        // would otherwise flood the index during a long run — one line per interval is enough.
+        // Skips are recorded so the history explains a quiet night, but only the *first* of a run of
+        // identical ones: at the default five-minute interval a blocked pilot would otherwise write
+        // 288 rows a day into a 200-row index and prune every real run out of it. The state is
+        // in-memory, so a restart costs one extra row — cheaper than reading the index every tick.
+        if (_lastRecordedSkip == decision.Reason)
+        {
+            _logger.LogDebug("Skip ({Reason}) repeated; not recording another history row.", decision.Reason);
+            return;
+        }
+
+        _lastRecordedSkip = decision.Reason;
+
         var now = _timeProvider.GetUtcNow();
         var record = (RunRecord.Start(now) with
         {
@@ -523,9 +578,13 @@ public sealed class PilotScheduler : BackgroundService
         await _history.AppendAsync(record, cancellationToken).ConfigureAwait(false);
     }
 
-    CycleCompleted Complete(CycleTrigger trigger, CycleDecision decision, RunRecord? record)
+    CycleCompleted Complete(
+        CycleTrigger trigger,
+        CycleDecision decision,
+        RunRecord? record,
+        UsageSnapshot? usageAfterRun = null)
     {
-        var completed = new CycleCompleted(trigger, decision, record);
+        var completed = new CycleCompleted(trigger, decision, record, usageAfterRun);
         CycleCompleted?.Invoke(this, completed);
         return completed;
     }

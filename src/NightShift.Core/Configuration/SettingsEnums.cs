@@ -19,6 +19,32 @@ public enum UsageMetric
     HighestOfAll,
 }
 
+/// <summary>
+/// How the plan file states what is left to do (plan.md §9.1).
+/// </summary>
+/// <remarks>
+/// Two conventions exist in the wild and neither can read the other. A checkbox plan is a flat list
+/// of <c>- [ ]</c> task items; a milestone plan is a sequence of <c>### M7 — Title</c> headings, each
+/// a body of work marked delivered in its own heading. Parsing a milestone plan with the checkbox
+/// counter reports "0 of 0", and telling a run to "tick its checkbox" in one is an instruction it
+/// cannot carry out — so the format decides both the tally and the prompt.
+/// </remarks>
+[JsonConverter(typeof(JsonStringEnumConverter<PlanFormat>))]
+public enum PlanFormat
+{
+    /// <summary>
+    /// Work it out from the file. Default: any checkbox wins, otherwise any milestone heading, and a
+    /// file with neither is treated as an empty checkbox plan — which is what it looks like.
+    /// </summary>
+    Auto,
+
+    /// <summary><c>- [ ]</c> / <c>- [x]</c> / <c>- [!]</c> task-list items.</summary>
+    Checkbox,
+
+    /// <summary><c>### M7 — Title</c> headings, delivered ones marked in the heading or a status line.</summary>
+    Milestone,
+}
+
 /// <summary>What to do when no usage figure could be obtained (plan.md §4.3).</summary>
 [JsonConverter(typeof(JsonStringEnumConverter<UsageUnavailableBehavior>))]
 public enum UsageUnavailableBehavior
@@ -79,6 +105,22 @@ public enum CavemanLevel
     WenyanLite,
     WenyanFull,
     WenyanUltra,
+}
+
+/// <summary>
+/// The plain-language name of a <see cref="UsageMetric"/>. Lives in Core because both the Settings
+/// dropdown and the dashboard's gate line render it, and two tables would eventually disagree about
+/// what the pilot is actually gating on.
+/// </summary>
+public static class UsageMetricText
+{
+    public static string Describe(UsageMetric metric) => metric switch
+    {
+        UsageMetric.HighestOfAll => "Highest of all",
+        UsageMetric.FiveHour => "Session (5h)",
+        UsageMetric.SevenDay => "Weekly (7d)",
+        _ => metric.ToString(),
+    };
 }
 
 public static class PermissionModeExtensions

@@ -52,6 +52,49 @@ public sealed class UsageMetricSelectorTests
         Assert.Null(UsageSnapshot.Unavailable("no providers", Now).Select(UsageMetric.HighestOfAll));
 
     [Fact]
+    public void The_detailed_reading_names_the_window_that_won()
+    {
+        // The dashboard shows this name because neither per-model window has a gauge: without it a
+        // gate blocked by Opus is a number that matches nothing on screen.
+        var reading = Snapshot(fiveHour: 12, sevenDay: 20, opus: 77).SelectDetailed(UsageMetric.HighestOfAll);
+
+        Assert.Equal(77, reading.Percent);
+        Assert.Equal(UsageMetricSelector.SevenDayOpusName, reading.WindowName);
+    }
+
+    [Theory]
+    [InlineData(UsageMetric.FiveHour, 33, UsageMetricSelector.FiveHourName)]
+    [InlineData(UsageMetric.SevenDay, 90, UsageMetricSelector.SevenDayName)]
+    public void A_single_window_metric_names_that_window(UsageMetric metric, double expected, string name)
+    {
+        var reading = Snapshot(fiveHour: 33, sevenDay: 90).SelectDetailed(metric);
+
+        Assert.Equal(expected, reading.Percent);
+        Assert.Equal(name, reading.WindowName);
+    }
+
+    [Fact]
+    public void An_unknown_reading_names_no_window()
+    {
+        Assert.Null(Snapshot().SelectDetailed(UsageMetric.HighestOfAll).WindowName);
+        Assert.Null(Snapshot(sevenDay: 50).SelectDetailed(UsageMetric.FiveHour).WindowName);
+        Assert.Null(UsageSnapshot.Unavailable("none", Now).SelectDetailed(UsageMetric.SevenDay).WindowName);
+    }
+
+    [Fact]
+    public void The_detailed_reading_never_disagrees_with_the_gate()
+    {
+        // Select is what the scheduler compares against the threshold; if the two ever diverged the
+        // dashboard would explain a decision that was not made.
+        var snapshot = Snapshot(fiveHour: 12, sevenDay: 20, opus: 77, sonnet: 41);
+
+        foreach (var metric in Enum.GetValues<UsageMetric>())
+        {
+            Assert.Equal(snapshot.Select(metric), snapshot.SelectDetailed(metric).Percent);
+        }
+    }
+
+    [Fact]
     public void Earliest_reset_considers_only_windows_at_or_above_the_threshold()
     {
         var soon = Now.AddHours(1);

@@ -61,7 +61,9 @@ public sealed class CompositeUsageProvider : IUsageProvider
         }
     }
 
-    public async Task<UsageSnapshot> GetUsageAsync(CancellationToken cancellationToken = default)
+    public async Task<UsageSnapshot> GetUsageAsync(
+        bool forceRefresh = false,
+        CancellationToken cancellationToken = default)
     {
         var order = _settings.Current.UsageProviderOrder.ToSequence();
         var reasons = new List<string>();
@@ -78,7 +80,7 @@ public sealed class CompositeUsageProvider : IUsageProvider
             UsageSnapshot snapshot;
             try
             {
-                snapshot = await provider.GetUsageAsync(cancellationToken).ConfigureAwait(false);
+                snapshot = await provider.GetUsageAsync(forceRefresh, cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {

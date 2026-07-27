@@ -18,22 +18,73 @@ public sealed class PromptBuilderTests
             Continue work on this project.
 
             Read `plan.md` in this directory. It is the authoritative task list.
-            Pick up from the first unchecked item and make concrete progress.
+
+            Pick up from the first unchecked item in plan.md and make concrete progress.
+            - After finishing an item, tick its checkbox.
+            - If an item is ambiguous or blocked, mark it `- [!]` with a one-line note
+              explaining the blocker, then move to the next item.
+            - Prefer finishing one item completely over starting several.
 
             Rules for this session:
             - You are running unattended. There is no human available to answer questions.
               Never ask for confirmation, clarification, or approval — decide and proceed.
-            - Work only on items in plan.md. Do not invent new scope.
-            - After finishing an item, tick its checkbox in plan.md and commit that change
-              along with the code, using a conventional commit message.
-            - If an item is ambiguous or blocked, mark it `- [!]` in plan.md with a one-line
-              note explaining the blocker, then move to the next item.
-            - Prefer finishing one item completely over starting several.
+            - Work only on what plan.md already describes. Do not invent new scope.
+            - Commit your work, using a conventional commit message.
             - Run the project's tests before you finish. If they fail, fix them.
             - End your run in a clean state: no half-applied edits, everything committed.
             """;
 
         Assert.Equal(Expected.ReplaceLineEndings("\n"), _builder.Build(new PilotSettings()));
+    }
+
+    [Fact]
+    public void A_milestone_plan_is_told_to_mark_milestones_delivered()
+    {
+        // The exact markers matter: PlanParser reads these back, so a run that follows this prompt is
+        // what makes the dashboard's tally move.
+        const string Expected = """
+            /caveman:caveman full
+
+            Continue work on this project.
+
+            Read `plan.md` in this directory. It is the authoritative task list.
+
+            Work the lowest-numbered milestone in plan.md that is not yet marked delivered,
+            and complete the whole of it.
+            - When it is done, append ` — **delivered YYYY-MM-DD**` to that milestone's heading
+              and add a `**Status:**` line under it saying what shipped.
+            - If the milestone is ambiguous or blocked, add a `**Blocked:**` line under its
+              heading with a one-line reason, then move to the next milestone.
+            - Prefer finishing one milestone completely over starting several.
+
+            Rules for this session:
+            - You are running unattended. There is no human available to answer questions.
+              Never ask for confirmation, clarification, or approval — decide and proceed.
+            - Work only on what plan.md already describes. Do not invent new scope.
+            - Commit your work, using a conventional commit message.
+            - Run the project's tests before you finish. If they fail, fix them.
+            - End your run in a clean state: no half-applied edits, everything committed.
+            """;
+
+        Assert.Equal(
+            Expected.ReplaceLineEndings("\n"),
+            _builder.Build(new PilotSettings { PlanFormat = PlanFormat.Milestone }));
+    }
+
+    [Fact]
+    public void An_unresolved_format_falls_back_to_the_checkbox_conventions() =>
+        Assert.Equal(
+            _builder.Build(new PilotSettings { PlanFormat = PlanFormat.Checkbox }),
+            _builder.Build(new PilotSettings { PlanFormat = PlanFormat.Auto }));
+
+    [Fact]
+    public void A_template_without_the_conventions_token_is_left_alone()
+    {
+        const string Template = "Do the work described in {planFile}.";
+
+        Assert.Equal(
+            "Do the work described in plan.md.",
+            PromptBuilder.ApplyPlanFile(Template, "plan.md", PlanFormat.Milestone));
     }
 
     [Fact]
@@ -81,11 +132,10 @@ public sealed class PromptBuilderTests
         Assert.DoesNotContain(PromptBuilder.PlanFileToken, prompt, StringComparison.Ordinal);
         Assert.DoesNotContain("plan.md", prompt, StringComparison.Ordinal);
 
-        // The default template names the plan file four times; a single-replacement bug would leave
-        // the run reading a file that does not exist.
-        var occurrences = PilotSettings.DefaultPromptTemplate.Split(PromptBuilder.PlanFileToken).Length - 1;
-        Assert.Equal(4, occurrences);
-        Assert.Equal(occurrences, prompt.Split("roadmap.md").Length - 1);
+        // The rendered prompt names the plan file three times — twice from the template and once from
+        // the conventions block it pulls in. A single-replacement bug would leave the run reading a
+        // file that does not exist.
+        Assert.Equal(3, prompt.Split("roadmap.md").Length - 1);
     }
 
     [Fact]

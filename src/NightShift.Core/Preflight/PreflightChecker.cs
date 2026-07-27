@@ -161,29 +161,45 @@ public sealed record PreflightFixResult(
 }
 
 /// <summary>
-/// Checkbox tallies from the plan file, parsed the way plan.md §9.1 describes.
+/// Progress tallies from the plan file, parsed the way plan.md §9.1 describes.
 /// </summary>
-/// <param name="Completed"><c>- [x]</c>.</param>
-/// <param name="Remaining"><c>- [ ]</c> — the only ones a run can actually pick up.</param>
-/// <param name="Blocked"><c>- [!]</c>, written by a previous run that hit a wall (plan.md §5.2).</param>
+/// <param name="Completed"><c>- [x]</c>, or a milestone marked delivered.</param>
+/// <param name="Remaining">
+/// <c>- [ ]</c>, or a milestone not yet delivered — the only ones a run can actually pick up.
+/// </param>
+/// <param name="Blocked">
+/// <c>- [!]</c> or <c>**Blocked:**</c>, written by a previous run that hit a wall (plan.md §5.2).
+/// </param>
+/// <param name="Format">
+/// Which convention produced these numbers. It only changes the wording — the counts mean the same
+/// thing either way — but calling four milestones "items" makes the project card read as a plan with
+/// four afternoons left in it.
+/// </param>
 /// <remarks>
 /// Carried on <see cref="PreflightResult"/> so the dashboard's project card can render
 /// "12 of 30 items complete" straight from the preflight it already ran, instead of opening and
 /// re-parsing the file itself.
 /// </remarks>
-public sealed record PlanItemCounts(int Completed, int Remaining, int Blocked)
+public sealed record PlanItemCounts(
+    int Completed,
+    int Remaining,
+    int Blocked,
+    PlanFormat Format = PlanFormat.Checkbox)
 {
-    /// <summary>No checkboxes at all.</summary>
+    /// <summary>Nothing found at all.</summary>
     public static PlanItemCounts Empty { get; } = new(0, 0, 0);
 
-    /// <summary>Every checkbox found, whatever its mark.</summary>
+    /// <summary>Every item found, whatever its mark.</summary>
     public int Total => Completed + Remaining + Blocked;
 
-    /// <summary>True when there is at least one <c>- [ ]</c> left to work on.</summary>
+    /// <summary>True when there is at least one unfinished item left to work on.</summary>
     public bool HasRemainingWork => Remaining > 0;
 
+    /// <summary>What one unit of this plan is called: <c>item</c> or <c>milestone</c>.</summary>
+    public string Noun => Format == PlanFormat.Milestone ? "milestone" : "item";
+
     /// <summary>The plan.md §9.1 project-card string.</summary>
-    public string Summary => $"{Completed} of {Total} items complete";
+    public string Summary => $"{Completed} of {Total} {Noun}s complete";
 }
 
 /// <summary>One row of the plan.md §7 table.</summary>
@@ -225,12 +241,19 @@ public sealed record PreflightCheck(
 /// The mode a run started now would really use, already decided by <see cref="AutoModeProbe"/>. Null
 /// only when the decision itself failed.
 /// </param>
+/// <param name="PlanFormat">
+/// The convention the plan file actually turned out to use, with <see cref="PlanFormat.Auto"/>
+/// already resolved. The scheduler hands this to the runner so the prompt states the matching
+/// conventions — this is the only place the detection result exists, because it comes from reading
+/// the file, which preflight has just done.
+/// </param>
 public sealed record PreflightResult(
     IReadOnlyList<PreflightCheck> Checks,
     DateTimeOffset CheckedAt,
     PlanItemCounts? PlanItems = null,
     string? ClaudeExecutablePath = null,
-    PermissionModeDecision? PermissionMode = null)
+    PermissionModeDecision? PermissionMode = null,
+    PlanFormat PlanFormat = PlanFormat.Checkbox)
 {
     /// <summary>The worst status present — the colour of the summary pill.</summary>
     public PreflightStatus Status => Checks.Count == 0
@@ -619,7 +642,7 @@ public sealed partial class PreflightChecker : IPreflightChecker
         checks.Add(CheckProjectDirectory(projectDirectory, projectExists));
 
         var plan = await RunPlanChecksAsync(
-            projectDirectory, projectExists, normalized.PlanFileName, cancellationToken)
+            projectDirectory, projectExists, normalized.PlanFileName, normalized.PlanFormat, cancellationToken)
             .ConfigureAwait(false);
         checks.Add(plan.File);
         checks.Add(plan.Items);
@@ -666,7 +689,8 @@ public sealed partial class PreflightChecker : IPreflightChecker
             _timeProvider.GetUtcNow(),
             plan.Counts,
             resolution.Value?.ExecutablePath,
-            decision.Value);
+            decision.Value,
+            plan.Format);
 
         _logger.Log(
             result.HasErrors ? LogLevel.Warning : LogLevel.Information,
@@ -790,10 +814,11 @@ public sealed partial class PreflightChecker : IPreflightChecker
     /// plan.md §7 row 4 plus the "is there anything left to do" row. Both come out of one read, so a
     /// plan file cannot be seen to exist and then vanish between the two.
     /// </summary>
-    async Task<(PreflightCheck File, PreflightCheck Items, PlanItemCounts? Counts)> RunPlanChecksAsync(
+    async Task<(PreflightCheck File, PreflightCheck Items, PlanItemCounts? Counts, PlanFormat Format)> RunPlanChecksAsync(
         string projectDirectory,
         bool projectExists,
         string planFileName,
+        PlanFormat planFormat,
         CancellationToken cancellationToken)
     {
         if (!projectExists)
@@ -801,7 +826,8 @@ public sealed partial class PreflightChecker : IPreflightChecker
             return (
                 Error(PreflightCheckId.PlanFile, "Not checked: the project directory does not exist."),
                 Warning(PreflightCheckId.PlanItems, "Not checked: there is no plan file to read."),
-                null);
+                null,
+                Resolve(planFormat));
         }
 
         string planPath;
@@ -814,7 +840,8 @@ public sealed partial class PreflightChecker : IPreflightChecker
             return (
                 Error(PreflightCheckId.PlanFile, $"`{planFileName}` is not a usable file name: {ex.Message}"),
                 Warning(PreflightCheckId.PlanItems, "Not checked: there is no plan file to read."),
-                null);
+                null,
+                Resolve(planFormat));
         }
 
         if (!File.Exists(planPath))
@@ -832,7 +859,8 @@ public sealed partial class PreflightChecker : IPreflightChecker
             return (
                 missing,
                 Warning(PreflightCheckId.PlanItems, "Not checked: there is no plan file to read."),
-                null);
+                null,
+                Resolve(planFormat));
         }
 
         string text;
@@ -845,13 +873,21 @@ public sealed partial class PreflightChecker : IPreflightChecker
             return (
                 Error(PreflightCheckId.PlanFile, $"{planPath} exists but could not be read: {ex.Message}"),
                 Error(PreflightCheckId.PlanItems, $"Not checked: {planFileName} could not be read."),
-                null);
+                null,
+                Resolve(planFormat));
         }
 
-        var counts = CountPlanItems(text);
+        var parsed = PlanParser.Parse(text, planFormat);
+        var counts = parsed.Counts;
         var file = Ok(PreflightCheckId.PlanFile, $"{planPath} exists ({counts.Summary}).");
 
-        return (file, PlanItemsCheck(counts, planPath, planFileName), counts);
+        return (file, PlanItemsCheck(counts, planPath, planFileName), counts, parsed.Format);
+
+        // When the file could not be read there is nothing to detect from, so an explicit setting is
+        // honoured and `Auto` falls back to the checkbox conventions the prompt used before formats
+        // existed.
+        static PlanFormat Resolve(PlanFormat requested) =>
+            requested == PlanFormat.Auto ? PlanFormat.Checkbox : requested;
     }
 
     /// <summary>
@@ -860,13 +896,20 @@ public sealed partial class PreflightChecker : IPreflightChecker
     /// </summary>
     static PreflightCheck PlanItemsCheck(PlanItemCounts counts, string planPath, string planFileName)
     {
+        var milestones = counts.Format == PlanFormat.Milestone;
+        var blockedMark = milestones ? "`**Blocked:**`" : "`- [!]`";
+
         if (counts.Total == 0)
         {
+            var nothing = milestones
+                ? $"{planFileName} has no `## M1 — …` milestone headings, so a run has nothing to pick up."
+                : $"{planFileName} has no `- [ ]` checkboxes, so a run has nothing to pick up.";
+
             return new PreflightCheck(
                 PreflightCheckId.PlanItems,
                 NameOf(PreflightCheckId.PlanItems),
                 PreflightStatus.Warning,
-                $"{planFileName} has no `- [ ]` checkboxes, so a run has nothing to pick up.")
+                nothing)
             {
                 Fix = new PreflightFixAction(PreflightFixCommand.OpenPlanFile, "Open the plan file", planPath),
             };
@@ -875,16 +918,20 @@ public sealed partial class PreflightChecker : IPreflightChecker
         if (!counts.HasRemainingWork)
         {
             var blocked = counts.Blocked == 1
-                ? " 1 item is marked blocked (`- [!]`), which a run will skip."
+                ? $" 1 {counts.Noun} is marked blocked ({blockedMark}), which a run will skip."
                 : counts.Blocked > 1
-                    ? $" {counts.Blocked} items are marked blocked (`- [!]`), which a run will skip."
+                    ? $" {counts.Blocked} {counts.Noun}s are marked blocked ({blockedMark}), which a run will skip."
                     : string.Empty;
+
+            var done = milestones
+                ? $"Every milestone in {planFileName} is already delivered ({counts.Summary}).{blocked}"
+                : $"Every checkbox in {planFileName} is already ticked ({counts.Summary}).{blocked}";
 
             return new PreflightCheck(
                 PreflightCheckId.PlanItems,
                 NameOf(PreflightCheckId.PlanItems),
                 PreflightStatus.Warning,
-                $"Every checkbox in {planFileName} is already ticked ({counts.Summary}).{blocked}")
+                done)
             {
                 Fix = new PreflightFixAction(PreflightFixCommand.OpenPlanFile, "Open the plan file", planPath),
             };
@@ -892,7 +939,7 @@ public sealed partial class PreflightChecker : IPreflightChecker
 
         return Ok(
             PreflightCheckId.PlanItems,
-            $"{counts.Remaining} item{(counts.Remaining == 1 ? "" : "s")} left to do ({counts.Summary}).");
+            $"{counts.Remaining} {counts.Noun}{(counts.Remaining == 1 ? "" : "s")} left to do ({counts.Summary}).");
     }
 
     /// <summary>plan.md §7 row 5. The token is never read out of the credential, let alone reported.</summary>
@@ -1468,70 +1515,9 @@ public sealed partial class PreflightChecker : IPreflightChecker
 
     // ── Plan parsing ───────────────────────────────────────────────────────────────────────────
 
-    /// <summary>
-    /// Counts <c>- [ ]</c>, <c>- [x]</c> and <c>- [!]</c> the way plan.md §9.1 describes.
-    /// </summary>
-    /// <remarks>
-    /// Fenced code blocks are skipped. A plan that documents its own conventions — as this repo's
-    /// does — shows example checkboxes inside a fence, and counting those would make the dashboard's
-    /// "12 of 30" quietly wrong. <c>*</c> and <c>+</c> bullets are accepted alongside <c>-</c>
-    /// because CommonMark treats them identically and a user's editor may rewrite them.
-    /// </remarks>
-    public static PlanItemCounts CountPlanItems(string? planText)
-    {
-        if (string.IsNullOrEmpty(planText))
-        {
-            return PlanItemCounts.Empty;
-        }
-
-        var completed = 0;
-        var remaining = 0;
-        var blocked = 0;
-        var inFence = false;
-
-        foreach (var line in planText.Split('\n'))
-        {
-            var trimmed = line.TrimStart().TrimEnd('\r');
-
-            if (trimmed.StartsWith("```", StringComparison.Ordinal) ||
-                trimmed.StartsWith("~~~", StringComparison.Ordinal))
-            {
-                inFence = !inFence;
-                continue;
-            }
-
-            if (inFence)
-            {
-                continue;
-            }
-
-            var match = CheckboxPattern().Match(line);
-            if (!match.Success)
-            {
-                continue;
-            }
-
-            switch (match.Groups["mark"].ValueSpan[0])
-            {
-                case 'x':
-                case 'X':
-                    completed++;
-                    break;
-                case '!':
-                    blocked++;
-                    break;
-                default:
-                    remaining++;
-                    break;
-            }
-        }
-
-        return new PlanItemCounts(completed, remaining, blocked);
-    }
-
-    /// <summary>A markdown task-list item at the start of a line, with any of the three marks.</summary>
-    [GeneratedRegex(@"^[ \t]*[-*+][ \t]+\[(?<mark>[ xX!])\](?=[ \t]|\r?$)", RegexOptions.CultureInvariant)]
-    private static partial Regex CheckboxPattern();
+    /// <inheritdoc cref="PlanParser.CountCheckboxes"/>
+    public static PlanItemCounts CountPlanItems(string? planText) =>
+        PlanParser.CountCheckboxes(planText);
 
     /// <summary>`claude --version` prints e.g. `2.1.220 (Claude Code)`.</summary>
     [GeneratedRegex(@"\d+\.\d+(\.\d+)*(-[0-9A-Za-z.\-]+)?", RegexOptions.CultureInvariant)]

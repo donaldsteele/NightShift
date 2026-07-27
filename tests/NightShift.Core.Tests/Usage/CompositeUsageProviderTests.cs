@@ -13,11 +13,17 @@ public sealed class CompositeUsageProviderTests
     {
         public int Calls { get; private set; }
 
+        /// <summary>Whether the composite forwarded a forced refresh, checked by its own test.</summary>
+        public bool? LastForceRefresh { get; private set; }
+
         public UsageSource Source => source;
 
-        public Task<UsageSnapshot> GetUsageAsync(CancellationToken cancellationToken = default)
+        public Task<UsageSnapshot> GetUsageAsync(
+            bool forceRefresh = false,
+            CancellationToken cancellationToken = default)
         {
             Calls++;
+            LastForceRefresh = forceRefresh;
             return Task.FromResult(factory());
         }
     }
@@ -34,6 +40,21 @@ public sealed class CompositeUsageProviderTests
 
     static CompositeUsageProvider Create(ISettingsStore settings, params IUsageProvider[] providers) =>
         new(providers, settings, NullLogger<CompositeUsageProvider>.Instance);
+
+    [Fact]
+    public async Task A_forced_refresh_is_forwarded_to_the_provider()
+    {
+        // The composite owns no cache of its own, so "force" is only meaningful if it reaches the
+        // provider that does.
+        var oauth = new StubProvider(UsageSource.OAuth, () => Available(UsageSource.OAuth, 20));
+        var composite = Create(Settings(UsageProviderPreference.OAuthThenCcusage), oauth);
+
+        await composite.GetUsageAsync();
+        Assert.False(oauth.LastForceRefresh);
+
+        await composite.GetUsageAsync(forceRefresh: true);
+        Assert.True(oauth.LastForceRefresh);
+    }
 
     [Fact]
     public async Task Preferred_provider_wins_and_the_fallback_is_never_asked()

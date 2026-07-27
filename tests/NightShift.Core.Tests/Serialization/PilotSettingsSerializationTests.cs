@@ -13,7 +13,7 @@ public sealed class PilotSettingsSerializationTests
 
         Assert.NotNull(settings);
         Assert.Equal(PilotSettings.CurrentVersion, settings.SettingsVersion);
-        Assert.Equal(60, settings.IntervalMinutes);
+        Assert.Equal(5, settings.IntervalMinutes);
         Assert.Equal(90, settings.ThresholdPercent);
         Assert.Equal(UsageMetric.HighestOfAll, settings.UsageMetric);
         Assert.Equal(PermissionMode.Auto, settings.PermissionMode);

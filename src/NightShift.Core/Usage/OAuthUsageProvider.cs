@@ -121,12 +121,14 @@ public sealed class OAuthUsageProvider : IUsageProvider
         }
     }
 
-    public async Task<UsageSnapshot> GetUsageAsync(CancellationToken cancellationToken = default)
+    public async Task<UsageSnapshot> GetUsageAsync(
+        bool forceRefresh = false,
+        CancellationToken cancellationToken = default)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            return await GetUsageCoreAsync(cancellationToken).ConfigureAwait(false);
+            return await GetUsageCoreAsync(forceRefresh, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -134,11 +136,13 @@ public sealed class OAuthUsageProvider : IUsageProvider
         }
     }
 
-    async Task<UsageSnapshot> GetUsageCoreAsync(CancellationToken cancellationToken)
+    async Task<UsageSnapshot> GetUsageCoreAsync(bool forceRefresh, CancellationToken cancellationToken)
     {
         var now = _timeProvider.GetUtcNow();
 
-        if (_cached is { } cached && now < _cacheExpiresAt)
+        // `forceRefresh` skips the cache and nothing else. The credential, latched-401 and 429 checks
+        // below all still apply — a forced refresh must never turn into a retry into a wall.
+        if (!forceRefresh && _cached is { } cached && now < _cacheExpiresAt)
         {
             return cached;
         }

@@ -364,6 +364,54 @@ public sealed class OAuthUsageProviderTests : IDisposable
         Assert.Equal(Start.AddSeconds(61), refreshed.RetrievedAt);
     }
 
+    [Fact]
+    public async Task A_forced_refresh_goes_past_the_cache()
+    {
+        _handler.Enqueue(HttpStatusCode.OK, FullResponse);
+        _handler.Enqueue(HttpStatusCode.OK, FullResponse);
+        var provider = CreateProvider();
+
+        var first = await provider.GetUsageAsync();
+        _time.Advance(TimeSpan.FromSeconds(1));
+        var forced = await provider.GetUsageAsync(forceRefresh: true);
+
+        Assert.Equal(2, _handler.Requests.Count);
+        Assert.NotSame(first, forced);
+        Assert.Equal(Start.AddSeconds(1), forced.RetrievedAt);
+    }
+
+    [Fact]
+    public async Task A_forced_refresh_still_respects_an_active_backoff()
+    {
+        // "Force" means force past the cache, never past a rate limit. Hammering an endpoint that
+        // just said no is the failure this app exists to avoid (plan.md §4.1).
+        _handler.Enqueue(HttpStatusCode.TooManyRequests, "{}");
+        var provider = CreateProvider();
+
+        await provider.GetUsageAsync();
+        Assert.NotNull(provider.BackoffUntil);
+
+        var forced = await provider.GetUsageAsync(forceRefresh: true);
+
+        Assert.Single(_handler.Requests);
+        Assert.False(forced.IsAvailable);
+    }
+
+    [Fact]
+    public async Task A_forced_refresh_still_respects_a_latched_unauthorized()
+    {
+        _handler.Enqueue(HttpStatusCode.Unauthorized, "{}");
+        var provider = CreateProvider();
+
+        await provider.GetUsageAsync();
+
+        var forced = await provider.GetUsageAsync(forceRefresh: true);
+
+        Assert.Single(_handler.Requests);
+        Assert.False(forced.IsAvailable);
+        Assert.True(provider.RequiresReauthentication);
+    }
+
     public void Dispose()
     {
         _httpClient.Dispose();
