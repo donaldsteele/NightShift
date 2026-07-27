@@ -83,6 +83,20 @@ public sealed record PilotSettings
     /// </summary>
     public int QuotaResetGraceMinutes { get; set; } = 1;
 
+    /// <summary>
+    /// Longest the pilot will sleep waiting for exhausted quota before re-checking anyway.
+    /// </summary>
+    /// <remarks>
+    /// <b>Do not remove this cap.</b> <c>seven_day.resets_at</c> is not when the quota comes back —
+    /// it reports when the oldest tokens age out, roughly seven days ahead, while the counter
+    /// actually resets on a ~72-hour cycle (independently measured at 71.9h, 72.6h and 72.5h over
+    /// three consecutive cycles, and separately observed dropping 60% → 2% while <c>resets_at</c>
+    /// still claimed nine hours away). Trusting that timestamp literally would park an unattended
+    /// pilot for up to a week. A usage check costs one cached HTTP call, so re-checking is strictly
+    /// cheaper than being wrong.
+    /// </remarks>
+    public int MaxQuotaWaitHours { get; set; } = 6;
+
     public bool StartWithWindows { get; set; }
 
     public bool StartMinimized { get; set; }
@@ -160,6 +174,7 @@ public sealed record PilotSettings
         MaxRunDurationMinutes = Math.Max(1, MaxRunDurationMinutes),
         StallTimeoutMinutes = Math.Max(1, StallTimeoutMinutes),
         QuotaResetGraceMinutes = Math.Clamp(QuotaResetGraceMinutes, 0, 60),
+        MaxQuotaWaitHours = Math.Clamp(MaxQuotaWaitHours, 1, 72),
         AllowedTools = string.IsNullOrWhiteSpace(AllowedTools) ? DefaultAllowedTools : AllowedTools.Trim(),
         PromptTemplate = string.IsNullOrWhiteSpace(PromptTemplate) ? DefaultPromptTemplate : PromptTemplate,
         HistoryRetentionCount = Math.Max(1, HistoryRetentionCount),

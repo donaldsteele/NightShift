@@ -2,14 +2,261 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="NightShift.Desktop.App"
              xmlns:local="using:NightShift.Desktop"
-             RequestedThemeVariant="Default">
-             <!-- "Default" ThemeVariant follows system theme variant. "Dark" or "Light" are other available options. -->
+             xmlns:views="using:NightShift.Desktop.Views"
+             RequestedThemeVariant="Dark">
+  <!-- plan.md §9: dark-mode default. "Default" would follow the system; everything below is also
+       styled for Light so a user who switches still gets legible contrast. -->
 
-    <Application.DataTemplates>
-        <local:ViewLocator />
-    </Application.DataTemplates>
+  <Application.DataTemplates>
+    <local:ViewLocator />
+  </Application.DataTemplates>
 
-    <Application.Styles>
-        <FluentTheme />
-    </Application.Styles>
+  <Application.Resources>
+    <ResourceDictionary>
+
+      <views:EnumEqualsConverter x:Key="EnumEquals" />
+      <views:SettingsLabelConverter x:Key="SettingsLabel" />
+
+      <FontFamily x:Key="NsMonospace">Cascadia Mono,Cascadia Code,Consolas,Menlo,DejaVu Sans Mono,monospace</FontFamily>
+
+      <ResourceDictionary.ThemeDictionaries>
+
+        <!-- The status colours match Controls/UsageGauge.cs exactly. Red in the tray, red on a
+             gauge and red on a preflight pill have to be the same red, or they stop meaning one
+             thing. -->
+        <ResourceDictionary x:Key="Dark">
+          <SolidColorBrush x:Key="NsCardBrush" Color="#1B1B1F" />
+          <SolidColorBrush x:Key="NsCardBorderBrush" Color="#2E2E35" />
+          <SolidColorBrush x:Key="NsRailBrush" Color="#141417" />
+          <SolidColorBrush x:Key="NsCodeBrush" Color="#101012" />
+          <SolidColorBrush x:Key="NsSubtleBrush" Color="#A1A1AA" />
+          <SolidColorBrush x:Key="NsOkBrush" Color="#4ADE80" />
+          <SolidColorBrush x:Key="NsWarningBrush" Color="#FBBF24" />
+          <SolidColorBrush x:Key="NsCriticalBrush" Color="#F87171" />
+          <SolidColorBrush x:Key="NsInfoBrush" Color="#60A5FA" />
+          <SolidColorBrush x:Key="NsOkFillBrush" Color="#1F4ADE80" />
+          <SolidColorBrush x:Key="NsWarningFillBrush" Color="#26FBBF24" />
+          <SolidColorBrush x:Key="NsCriticalFillBrush" Color="#26F87171" />
+          <SolidColorBrush x:Key="NsInfoFillBrush" Color="#2260A5FA" />
+          <SolidColorBrush x:Key="NsMutedFillBrush" Color="#22A1A1AA" />
+        </ResourceDictionary>
+
+        <ResourceDictionary x:Key="Light">
+          <SolidColorBrush x:Key="NsCardBrush" Color="#FFFFFF" />
+          <SolidColorBrush x:Key="NsCardBorderBrush" Color="#E4E4E7" />
+          <SolidColorBrush x:Key="NsRailBrush" Color="#F4F4F5" />
+          <SolidColorBrush x:Key="NsCodeBrush" Color="#FAFAFA" />
+          <SolidColorBrush x:Key="NsSubtleBrush" Color="#52525B" />
+          <SolidColorBrush x:Key="NsOkBrush" Color="#15803D" />
+          <SolidColorBrush x:Key="NsWarningBrush" Color="#B45309" />
+          <SolidColorBrush x:Key="NsCriticalBrush" Color="#B91C1C" />
+          <SolidColorBrush x:Key="NsInfoBrush" Color="#1D4ED8" />
+          <SolidColorBrush x:Key="NsOkFillBrush" Color="#1F15803D" />
+          <SolidColorBrush x:Key="NsWarningFillBrush" Color="#22B45309" />
+          <SolidColorBrush x:Key="NsCriticalFillBrush" Color="#22B91C1C" />
+          <SolidColorBrush x:Key="NsInfoFillBrush" Color="#221D4ED8" />
+          <SolidColorBrush x:Key="NsMutedFillBrush" Color="#1A71717A" />
+        </ResourceDictionary>
+
+      </ResourceDictionary.ThemeDictionaries>
+    </ResourceDictionary>
+  </Application.Resources>
+
+  <Application.Styles>
+    <FluentTheme />
+
+    <!-- ── Shared vocabulary ──────────────────────────────────────────────────────────────── -->
+
+    <Style Selector="Border.card">
+      <Setter Property="Background" Value="{DynamicResource NsCardBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource NsCardBorderBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="Padding" Value="16" />
+    </Style>
+
+    <Style Selector="TextBlock.h1">
+      <Setter Property="FontSize" Value="19" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <Style Selector="TextBlock.h2">
+      <Setter Property="FontSize" Value="14" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <Style Selector="TextBlock.caption">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Foreground" Value="{DynamicResource NsSubtleBrush}" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <Style Selector="TextBlock.mono">
+      <Setter Property="FontFamily" Value="{StaticResource NsMonospace}" />
+      <Setter Property="FontSize" Value="12" />
+    </Style>
+
+    <Style Selector="SelectableTextBlock.mono">
+      <Setter Property="FontFamily" Value="{StaticResource NsMonospace}" />
+      <Setter Property="FontSize" Value="12" />
+    </Style>
+
+    <Style Selector="TextBox.mono">
+      <Setter Property="FontFamily" Value="{StaticResource NsMonospace}" />
+      <Setter Property="FontSize" Value="12" />
+    </Style>
+
+    <Style Selector="TextBlock.ok">
+      <Setter Property="Foreground" Value="{DynamicResource NsOkBrush}" />
+    </Style>
+
+    <Style Selector="TextBlock.warning">
+      <Setter Property="Foreground" Value="{DynamicResource NsWarningBrush}" />
+    </Style>
+
+    <Style Selector="TextBlock.critical">
+      <Setter Property="Foreground" Value="{DynamicResource NsCriticalBrush}" />
+    </Style>
+
+    <!-- ── Status pill (plan.md §9.1) ─────────────────────────────────────────────────────── -->
+
+    <Style Selector="Border.pill">
+      <Setter Property="CornerRadius" Value="11" />
+      <Setter Property="Padding" Value="10,4" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Background" Value="{DynamicResource NsMutedFillBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource NsCardBorderBrush}" />
+    </Style>
+
+    <Style Selector="Border.pill > TextBlock">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <Style Selector="Border.pill.idle">
+      <Setter Property="Background" Value="{DynamicResource NsInfoFillBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource NsInfoBrush}" />
+    </Style>
+
+    <Style Selector="Border.pill.idle > TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource NsInfoBrush}" />
+    </Style>
+
+    <Style Selector="Border.pill.running">
+      <Setter Property="Background" Value="{DynamicResource NsOkFillBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource NsOkBrush}" />
+    </Style>
+
+    <Style Selector="Border.pill.running > TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource NsOkBrush}" />
+    </Style>
+
+    <Style Selector="Border.pill.paused">
+      <Setter Property="Background" Value="{DynamicResource NsMutedFillBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource NsSubtleBrush}" />
+    </Style>
+
+    <Style Selector="Border.pill.paused > TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource NsSubtleBrush}" />
+    </Style>
+
+    <Style Selector="Border.pill.blocked">
+      <Setter Property="Background" Value="{DynamicResource NsCriticalFillBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource NsCriticalBrush}" />
+    </Style>
+
+    <Style Selector="Border.pill.blocked > TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource NsCriticalBrush}" />
+    </Style>
+
+    <Style Selector="Border.pill.ratelimited">
+      <Setter Property="Background" Value="{DynamicResource NsWarningFillBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource NsWarningBrush}" />
+    </Style>
+
+    <Style Selector="Border.pill.ratelimited > TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource NsWarningBrush}" />
+    </Style>
+
+    <!-- ── Preflight pills: buttons, because a red one is clickable (plan.md §9.1) ────────── -->
+
+    <Style Selector="Button.checkpill">
+      <Setter Property="CornerRadius" Value="12" />
+      <Setter Property="Padding" Value="11,5" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Background" Value="{DynamicResource NsMutedFillBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource NsCardBorderBrush}" />
+    </Style>
+
+    <Style Selector="Button.checkpill.ok">
+      <Setter Property="Background" Value="{DynamicResource NsOkFillBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource NsOkBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource NsOkBrush}" />
+    </Style>
+
+    <Style Selector="Button.checkpill.warning">
+      <Setter Property="Background" Value="{DynamicResource NsWarningFillBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource NsWarningBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource NsWarningBrush}" />
+    </Style>
+
+    <Style Selector="Button.checkpill.error">
+      <Setter Property="Background" Value="{DynamicResource NsCriticalFillBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource NsCriticalBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource NsCriticalBrush}" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <!-- ── Danger (plan.md §9.1 Force run, §9.2's two permission escape hatches) ──────────── -->
+
+    <Style Selector="Button.danger">
+      <Setter Property="Background" Value="{DynamicResource NsCriticalFillBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource NsCriticalBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Foreground" Value="{DynamicResource NsCriticalBrush}" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <Style Selector="Border.danger">
+      <Setter Property="Background" Value="{DynamicResource NsCriticalFillBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource NsCriticalBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="6" />
+      <Setter Property="Padding" Value="12" />
+    </Style>
+
+    <Style Selector="Border.notice">
+      <Setter Property="Background" Value="{DynamicResource NsWarningFillBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource NsWarningBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="6" />
+      <Setter Property="Padding" Value="12" />
+    </Style>
+
+    <!-- A path or key the user is meant to read character by character. -->
+    <Style Selector="Border.code">
+      <Setter Property="Background" Value="{DynamicResource NsCodeBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource NsCardBorderBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="4" />
+      <Setter Property="Padding" Value="8,6" />
+    </Style>
+
+    <!-- The project path on the dashboard: a button that reads as a link (plan.md §9.1). -->
+    <Style Selector="Button.link">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Foreground" Value="{DynamicResource NsInfoBrush}" />
+      <Setter Property="Cursor" Value="Hand" />
+    </Style>
+
+    <Style Selector="Button.link:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="TextBlock.TextDecorations" Value="Underline" />
+    </Style>
+
+  </Application.Styles>
 </Application>

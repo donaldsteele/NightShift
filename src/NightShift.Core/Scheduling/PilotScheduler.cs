@@ -48,6 +48,9 @@ public sealed class PilotScheduler : BackgroundService
     /// </summary>
     UsageSnapshot? _lastUsage;
 
+    /// <summary>Cancellation for the run in flight, so <see cref="StopCurrentRun"/> can reach it.</summary>
+    CancellationTokenSource? _currentRunCts;
+
     public PilotScheduler(
         ISettingsStore settings,
         CompositeUsageProvider usage,
@@ -81,6 +84,40 @@ public sealed class PilotScheduler : BackgroundService
 
     /// <summary>The most recent preflight result, for the dashboard's check pills.</summary>
     public PreflightResult? LastPreflight { get; private set; }
+
+    /// <summary>Id of the run currently in flight, or null. Lets the UI label its Stop button.</summary>
+    public string? CurrentRunId { get; private set; }
+
+    /// <summary>
+    /// Cancels the run in flight, whoever started it (plan.md §9.1's "Stop run" button).
+    /// </summary>
+    /// <remarks>
+    /// Without this, a scheduled run could only be stopped by killing the app: cancellation
+    /// otherwise travels solely down the token passed to <see cref="RunNowAsync"/>, which a
+    /// background cycle does not have. The runner treats the cancellation as a kill-the-process-tree
+    /// signal and still records a <see cref="RunRecord"/>, so a stopped run is history, not a gap.
+    /// </remarks>
+    /// <returns>True if a run was in flight and has been asked to stop.</returns>
+    public bool StopCurrentRun()
+    {
+        var cts = Volatile.Read(ref _currentRunCts);
+        if (cts is null)
+        {
+            return false;
+        }
+
+        _logger.LogInformation("Stopping run {RunId} at the user's request.", CurrentRunId);
+        try
+        {
+            cts.Cancel();
+            return true;
+        }
+        catch (ObjectDisposedException)
+        {
+            // The run finished between the read and the cancel.
+            return false;
+        }
+    }
 
     /// <summary>Raised after every cycle, run or skip.</summary>
     public event EventHandler<CycleCompleted>? CycleCompleted;
@@ -140,7 +177,11 @@ public sealed class PilotScheduler : BackgroundService
 
         if (_state.QuotaResumesAtUtc is { } quotaReturnsAt && quotaWaitApplied)
         {
-            _state.NextRunAtUtc = quotaReturnsAt + TimeSpan.FromMinutes(settings.QuotaResetGraceMinutes);
+            // Same cap as the in-session path: a persisted reset time is no more trustworthy than
+            // the one that produced it, and a restart is a natural moment to re-check.
+            var reported = quotaReturnsAt + TimeSpan.FromMinutes(settings.QuotaResetGraceMinutes);
+            var cap = now + TimeSpan.FromHours(settings.MaxQuotaWaitHours);
+            _state.NextRunAtUtc = reported > cap ? cap : reported;
             _logger.LogInformation(
                 "Quota was exhausted before the last shutdown; the next check waits until {Next:u}.",
                 _state.NextRunAtUtc);
@@ -244,12 +285,34 @@ public sealed class PilotScheduler : BackgroundService
         if (record is { Outcome: RunOutcome.RateLimited, RateLimitResetsAt: { } quotaReturnsAt }
             && quotaReturnsAt + grace > now)
         {
-            _state.NextRunAtUtc = quotaReturnsAt + grace;
-            _logger.LogWarning(
-                "Run {RunId} was cut short by quota. Waiting until {Next:u}, when the {Window} window rolls over.",
-                record.Id,
-                _state.NextRunAtUtc,
-                record.SkipDetail);
+            // Capped, because `resets_at` cannot be trusted as "when quota returns" — see
+            // MaxQuotaWaitHours. Waking early costs one cached usage lookup; waking a week late
+            // costs every night in between.
+            var reportedWait = quotaReturnsAt + grace;
+            var cap = now + TimeSpan.FromHours(settings.MaxQuotaWaitHours);
+            var capped = reportedWait > cap;
+
+            _state.NextRunAtUtc = capped ? cap : reportedWait;
+
+            if (capped)
+            {
+                _logger.LogWarning(
+                    "Run {RunId} was cut short by quota, which claims to return at {Reported:u}. " +
+                    "That is further out than the {Cap}h cap, and reset times are known to be unreliable, " +
+                    "so the next check is at {Next:u} instead.",
+                    record.Id,
+                    reportedWait,
+                    settings.MaxQuotaWaitHours,
+                    _state.NextRunAtUtc);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "Run {RunId} was cut short by quota. Waiting until {Next:u}, when the window rolls over.",
+                    record.Id,
+                    _state.NextRunAtUtc);
+            }
+
             await _stateStore.SaveAsync(_state, cancellationToken).ConfigureAwait(false);
             return;
         }
@@ -384,12 +447,34 @@ public sealed class PilotScheduler : BackgroundService
             return Complete(trigger, missing, null);
         }
 
-        var progress = new Progress<RunProgress>(p => RunProgress?.Invoke(this, p));
+        var progress = new Progress<RunProgress>(p =>
+        {
+            CurrentRunId ??= p.RunId;
+            RunProgress?.Invoke(this, p);
+        });
+
+        // Linked so StopCurrentRun() can reach a run the background loop owns; a scheduled cycle has
+        // no caller-supplied token, so without this the only way to stop one is to kill the app.
+        using var runCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        Volatile.Write(ref _currentRunCts, runCts);
 
         RunRecord record;
         try
         {
-            record = await runner.RunAsync(settings, progress, cancellationToken).ConfigureAwait(false);
+            record = await runner.RunAsync(settings, progress, runCts.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (runCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            // Stopped by the user rather than by shutdown: record it so the history explains the gap.
+            _logger.LogInformation("Run stopped by the user.");
+            record = (RunRecord.Start(_timeProvider.GetUtcNow()) with
+            {
+                EndedAt = _timeProvider.GetUtcNow(),
+                Outcome = RunOutcome.Failed,
+                SkipDetail = "Stopped by the user.",
+                UsageAtStart = decision.Usage,
+            }).WithSummary("Stopped by the user.");
+            await _history.AppendAsync(record, CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -403,6 +488,11 @@ public sealed class PilotScheduler : BackgroundService
                 UsageAtStart = decision.Usage,
             }).WithSummary(ex.Message);
             await _history.AppendAsync(record, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            Volatile.Write(ref _currentRunCts, null);
+            CurrentRunId = null;
         }
 
         _state.LastRunId = record.Id;

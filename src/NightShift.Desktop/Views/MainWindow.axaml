@@ -3,20 +3,81 @@
         xmlns:vm="using:NightShift.Desktop.ViewModels"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+        mc:Ignorable="d" d:DesignWidth="1000" d:DesignHeight="700"
         x:Class="NightShift.Desktop.Views.MainWindow"
-        x:DataType="vm:MainViewModel"
+        x:DataType="vm:MainWindowViewModel"
         Icon="/Assets/avalonia-logo.ico"
-        Title="NightShift.Desktop">
+        Title="{Binding Title, FallbackValue=NightShift}"
+        Width="1000" Height="700"
+        MinWidth="800" MinHeight="560"
+        WindowStartupLocation="CenterScreen">
 
-    <Design.DataContext>
-        <!-- This only sets the DataContext for the previewer in an IDE,
-             to set the actual DataContext for runtime, set the DataContext property in code (look at App.axaml.cs) -->
-        <vm:MainViewModel />
-    </Design.DataContext>
+  <!--
+    No Design.DataContext: MainWindowViewModel is composed from the scheduler, the settings store
+    and three child view models, so there is no parameterless constructor to hand the previewer.
+    The x:DataType above is what makes the bindings below compile-checked.
+  -->
 
-    <TextBox Text="{Binding Greeting}"
-             HorizontalAlignment="Center"
-             VerticalAlignment="Center" />
+  <Grid ColumnDefinitions="216,*">
+
+    <!-- ── Left rail (plan.md §9) ─────────────────────────────────────────────────────────── -->
+    <Border Grid.Column="0"
+            Background="{DynamicResource NsRailBrush}"
+            BorderBrush="{DynamicResource NsCardBorderBrush}"
+            BorderThickness="0,0,1,0">
+      <DockPanel LastChildFill="False">
+
+        <StackPanel DockPanel.Dock="Top" Margin="18,20,18,14" Spacing="2">
+          <TextBlock Text="NightShift" Classes="h1" />
+          <TextBlock Text="Unattended Claude Code pilot" Classes="caption" />
+        </StackPanel>
+
+        <ListBox DockPanel.Dock="Top"
+                 Margin="8,0"
+                 Background="Transparent"
+                 BorderThickness="0"
+                 ItemsSource="{Binding Sections}"
+                 SelectedItem="{Binding SelectedNavigationItem, Mode=TwoWay}">
+          <ListBox.ItemTemplate>
+            <DataTemplate x:DataType="vm:NavigationItemViewModel">
+              <StackPanel Spacing="1" Margin="2,4" ToolTip.Tip="{Binding Description}">
+                <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
+                <TextBlock Text="{Binding Description}"
+                           Classes="caption"
+                           FontSize="11"
+                           TextTrimming="CharacterEllipsis" />
+              </StackPanel>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+
+        <!-- The pill sits at the foot of the rail so it is on screen whichever section is up. -->
+        <StackPanel DockPanel.Dock="Bottom" Margin="18,12,18,18" Spacing="8">
+          <Border Classes="pill"
+                  HorizontalAlignment="Left"
+                  ToolTip.Tip="{Binding StatusDetail}"
+                  Classes.idle="{Binding StatusKind, Converter={StaticResource EnumEquals}, ConverterParameter=Idle}"
+                  Classes.running="{Binding StatusKind, Converter={StaticResource EnumEquals}, ConverterParameter=Running}"
+                  Classes.paused="{Binding StatusKind, Converter={StaticResource EnumEquals}, ConverterParameter=Paused}"
+                  Classes.blocked="{Binding StatusKind, Converter={StaticResource EnumEquals}, ConverterParameter=Blocked}"
+                  Classes.ratelimited="{Binding StatusKind, Converter={StaticResource EnumEquals}, ConverterParameter=RateLimited}">
+            <TextBlock Text="{Binding StatusText}" TextWrapping="Wrap" />
+          </Border>
+
+          <TextBlock Text="{Binding StatusDetail}"
+                     Classes="caption"
+                     FontSize="11"
+                     MaxLines="3"
+                     TextTrimming="CharacterEllipsis"
+                     IsVisible="{Binding StatusDetail, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+        </StackPanel>
+
+      </DockPanel>
+    </Border>
+
+    <!-- ── Section content ────────────────────────────────────────────────────────────────── -->
+    <ContentControl Grid.Column="1" Content="{Binding CurrentViewModel}" />
+
+  </Grid>
 
 </Window>

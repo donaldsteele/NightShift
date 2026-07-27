@@ -1,0 +1,207 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:NightShift.Desktop.ViewModels"
+             mc:Ignorable="d" d:DesignWidth="784" d:DesignHeight="700"
+             x:Class="NightShift.Desktop.Views.HistoryView"
+             x:DataType="vm:HistoryViewModel">
+
+  <!-- plan.md §9.3. -->
+
+  <Grid RowDefinitions="Auto,Auto,2*,Auto,3*,Auto" Margin="20,18">
+
+    <!-- ── Header ─────────────────────────────────────────────────────────────────────────── -->
+    <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,10">
+      <StackPanel Grid.Column="0" Spacing="2">
+        <TextBlock Text="History" Classes="h1" />
+        <TextBlock Classes="caption" Text="{Binding TotalRunCount, StringFormat='{}{0} runs recorded'}" />
+      </StackPanel>
+      <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+        <ProgressBar IsIndeterminate="True"
+                     Width="90"
+                     VerticalAlignment="Center"
+                     IsVisible="{Binding IsLoading}" />
+        <Button Content="Refresh" Command="{Binding RefreshCommand}" />
+      </StackPanel>
+    </Grid>
+
+    <!-- ── Outcome filter chips ───────────────────────────────────────────────────────────── -->
+    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6" Margin="0,0,0,10">
+      <ItemsControl ItemsSource="{Binding OutcomeFilters}">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate>
+            <WrapPanel Orientation="Horizontal" />
+          </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+          <DataTemplate x:DataType="vm:OutcomeFilterViewModel">
+            <ToggleButton Margin="0,0,6,0"
+                          Padding="10,4"
+                          CornerRadius="12"
+                          FontSize="12"
+                          IsChecked="{Binding IsSelected, Mode=TwoWay}">
+              <StackPanel Orientation="Horizontal" Spacing="6">
+                <TextBlock Text="{Binding Label}" />
+                <TextBlock Text="{Binding Count}" Opacity="0.7" />
+              </StackPanel>
+            </ToggleButton>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+
+      <Button Content="Clear filters"
+              Command="{Binding ClearOutcomeFiltersCommand}"
+              IsVisible="{Binding HasActiveFilters}" />
+    </StackPanel>
+
+    <!-- ── The runs table ─────────────────────────────────────────────────────────────────── -->
+    <!--
+      TableView rather than DataGrid. Avalonia 12 deprecates DataGrid — its own package readme says
+      to use TableView for read-only tabular data, which is exactly what a finished run is — and
+      TableView ships in Avalonia.Controls, so there is no extra package and no theme include to
+      keep in step with the Fluent version.
+    -->
+    <Border Grid.Row="2" Classes="card" Padding="0" ClipToBounds="True">
+      <Panel>
+        <TableView ItemsSource="{Binding Runs}"
+                   SelectedItem="{Binding SelectedRun, Mode=TwoWay}"
+                   CanUserResizeColumns="True">
+
+          <TableView.ContextMenu>
+            <ContextMenu>
+              <MenuItem Header="Open transcript file" Command="{Binding OpenTranscriptFileCommand}" />
+              <MenuItem Header="Copy session id" Command="{Binding CopySessionIdCommand}" />
+              <Separator />
+              <MenuItem Header="Delete" Command="{Binding DeleteRunCommand}" />
+            </ContextMenu>
+          </TableView.ContextMenu>
+
+          <TableView.Columns>
+
+            <!-- Pixel widths sized to their longest real value, not Auto: TableView treats Auto as
+                 1*, which at this window width gave every column an equal seventh and truncated the
+                 timestamp. Columns are user-resizable for anything unusual. -->
+            <TableViewColumn Header="Started" Width="128" Binding="{Binding StartedAtText}" />
+            <TableViewColumn Header="Duration" Width="72" Binding="{Binding DurationText}" />
+
+            <TableViewColumn Header="Outcome" Width="110">
+              <TableViewColumn.CellTemplate>
+                <DataTemplate x:DataType="vm:RunRowViewModel">
+                  <Border Classes="pill"
+                          HorizontalAlignment="Left"
+                          ToolTip.Tip="{Binding SkipDetail}"
+                          Classes.running="{Binding Outcome, Converter={StaticResource EnumEquals}, ConverterParameter=Success}"
+                          Classes.blocked="{Binding Outcome, Converter={StaticResource EnumEquals}, ConverterParameter=Failed}"
+                          Classes.ratelimited="{Binding Outcome, Converter={StaticResource EnumEquals}, ConverterParameter=RateLimited}"
+                          Classes.paused="{Binding Outcome, Converter={StaticResource EnumEquals}, ConverterParameter=Skipped}"
+                          Classes.idle="{Binding Outcome, Converter={StaticResource EnumEquals}, ConverterParameter=Launched}">
+                    <TextBlock Text="{Binding OutcomeText}" />
+                  </Border>
+                </DataTemplate>
+              </TableViewColumn.CellTemplate>
+            </TableViewColumn>
+
+            <TableViewColumn Header="Usage at start" Width="142" Binding="{Binding UsageAtStartText}" />
+            <TableViewColumn Header="Cost" Width="62" Binding="{Binding CostText}" />
+
+            <!-- plan.md §11.4c: the mode a run *actually* used, which the fallback ladder means is
+                 not always the configured one. -->
+            <TableViewColumn Header="Mode" Width="86" Binding="{Binding PermissionModeUsedText}" />
+
+            <TableViewColumn Header="Summary" Width="*">
+              <TableViewColumn.CellTemplate>
+                <DataTemplate x:DataType="vm:RunRowViewModel">
+                  <TextBlock Text="{Binding Summary}"
+                             VerticalAlignment="Center"
+                             TextTrimming="CharacterEllipsis"
+                             ToolTip.Tip="{Binding Summary}" />
+                </DataTemplate>
+              </TableViewColumn.CellTemplate>
+            </TableViewColumn>
+
+          </TableView.Columns>
+        </TableView>
+
+        <TextBlock Text="No runs match the current filters."
+                   Classes="caption"
+                   HorizontalAlignment="Center"
+                   VerticalAlignment="Center"
+                   IsVisible="{Binding IsEmpty}" />
+      </Panel>
+    </Border>
+
+    <GridSplitter Grid.Row="3" Height="8" Background="Transparent" HorizontalAlignment="Stretch" />
+
+    <!-- ── Transcript pane with search (plan.md §9.3) ─────────────────────────────────────── -->
+    <Border Grid.Row="4" Classes="card" Padding="0">
+      <DockPanel LastChildFill="True">
+
+        <Border DockPanel.Dock="Top"
+                Padding="10,7"
+                BorderBrush="{DynamicResource NsCardBorderBrush}"
+                BorderThickness="0,0,0,1">
+          <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto">
+            <TextBlock Grid.Column="0"
+                       Text="Transcript"
+                       Classes="h2"
+                       VerticalAlignment="Center"
+                       Margin="0,0,12,0" />
+
+            <TextBox Grid.Column="1"
+                     PlaceholderText="Search this transcript"
+                     Text="{Binding TranscriptSearchText, Mode=TwoWay}" />
+
+            <TextBlock Grid.Column="2"
+                       Classes="caption"
+                       VerticalAlignment="Center"
+                       Margin="10,0"
+                       MinWidth="56"
+                       Text="{Binding TranscriptMatchPositionText}" />
+
+            <Button Grid.Column="3"
+                    Content="Previous"
+                    Command="{Binding PreviousMatchCommand}" />
+            <Button Grid.Column="4"
+                    Content="Next"
+                    Margin="6,0,0,0"
+                    Command="{Binding NextMatchCommand}" />
+          </Grid>
+        </Border>
+
+        <Panel>
+          <TextBox x:Name="TranscriptBox"
+                   Classes="mono"
+                   IsReadOnly="True"
+                   AcceptsReturn="True"
+                   TextWrapping="NoWrap"
+                   BorderThickness="0"
+                   Background="{DynamicResource NsCodeBrush}"
+                   Text="{Binding TranscriptText, Mode=OneWay}" />
+
+          <TextBlock Text="Select a run to read its transcript."
+                     Classes="caption"
+                     HorizontalAlignment="Center"
+                     VerticalAlignment="Center"
+                     IsVisible="{Binding !HasSelection}" />
+
+          <ProgressBar IsIndeterminate="True"
+                       Width="120"
+                       VerticalAlignment="Top"
+                       HorizontalAlignment="Center"
+                       Margin="0,10,0,0"
+                       IsVisible="{Binding IsTranscriptLoading}" />
+        </Panel>
+
+      </DockPanel>
+    </Border>
+
+    <TextBlock Grid.Row="5"
+               Classes="caption"
+               Margin="0,10,0,0"
+               Text="{Binding StatusMessage}"
+               IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+
+  </Grid>
+
+</UserControl>

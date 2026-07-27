@@ -1,10 +1,12 @@
 using Avalonia;
-using NightShift.Core;
-using NightShift.Core.Configuration;
-using NightShift.Core.Logging;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using NightShift.Core;
+using NightShift.Core.Configuration;
+using NightShift.Core.Logging;
+using NightShift.Desktop.Platform;
+using NightShift.Desktop.Services;
 using Serilog;
 
 namespace NightShift.Desktop;
@@ -22,13 +24,35 @@ sealed class Program
 
         try
         {
-            using var host = BuildHost(paths, args);
+            // plan.md §9.4: one instance, because two would mean two schedulers, two run gates and
+            // two writers racing over settings.json, state.json and runs/index.jsonl.
+            using var guard = new SingleInstanceGuard();
+            if (!guard.IsFirstInstance)
+            {
+                var surfaced = SecondInstanceSignal.TrySignalRunningInstance();
+                Log.Information(
+                    "NightShift is already running; {Outcome}.",
+                    surfaced ? "asked it to show its window" : "could not reach it to surface its window");
+                return 0;
+            }
+
+            using var host = BuildHost(paths, args, guard);
             App.Services = host.Services;
 
             host.Start();
             try
             {
-                Log.Information("NightShift starting. App data root: {Root}", paths.Root);
+                // Settings are on disk by now: StartupTasks loaded them during host.Start().
+                var settings = host.Services.GetRequiredService<ISettingsStore>().Current;
+                App.StartMinimizedToTray = settings.StartMinimized;
+
+                using var signal = SecondInstanceSignal.Listen(App.SurfaceExistingWindow);
+
+                Log.Information(
+                    "NightShift starting. App data root: {Root}. Start minimized: {StartMinimized}.",
+                    paths.Root,
+                    settings.StartMinimized);
+
                 return BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
             }
             finally
@@ -47,7 +71,7 @@ sealed class Program
         }
     }
 
-    static IHost BuildHost(AppPaths paths, string[] args)
+    static IHost BuildHost(AppPaths paths, string[] args, SingleInstanceGuard guard)
     {
         var builder = Host.CreateApplicationBuilder(args);
 
@@ -55,6 +79,14 @@ sealed class Program
         builder.Logging.AddSerilog(Log.Logger, dispose: false);
 
         builder.Services.AddNightShiftCore(paths);
+
+        // The guard this process already owns, rather than a second one that would look at its own
+        // mutex and conclude it had lost a race with itself.
+        builder.Services.AddSingleton(guard);
+
+        // Before AddNightShiftDesktop: its placeholders use TryAdd, so the first registration wins.
+        App.RegisterPlatformServices(builder.Services);
+        builder.Services.AddNightShiftDesktop();
 
         return builder.Build();
     }

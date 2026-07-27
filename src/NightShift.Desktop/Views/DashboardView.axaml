@@ -1,0 +1,294 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:controls="using:NightShift.Desktop.Controls"
+             xmlns:vm="using:NightShift.Desktop.ViewModels"
+             mc:Ignorable="d" d:DesignWidth="784" d:DesignHeight="700"
+             x:Class="NightShift.Desktop.Views.DashboardView"
+             x:DataType="vm:DashboardViewModel">
+
+  <!-- plan.md §9.1. -->
+
+  <Grid RowDefinitions="Auto,Auto,Auto,Auto,*,Auto" Margin="20,18">
+
+    <!-- ── Header and the run buttons ─────────────────────────────────────────────────────── -->
+    <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,14">
+
+      <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+        <TextBlock Text="Dashboard" Classes="h1" />
+        <TextBlock Text="{Binding StatusMessage}"
+                   Classes="caption"
+                   MaxLines="2"
+                   TextTrimming="CharacterEllipsis"
+                   IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+      </StackPanel>
+
+      <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+
+        <Button Content="Run now"
+                Classes="accent"
+                Command="{Binding RunNowCommand}"
+                ToolTip.Tip="Starts a cycle now. The usage gate still applies." />
+
+        <Button Content="Pause"
+                Command="{Binding PauseCommand}"
+                IsVisible="{Binding !IsPaused}"
+                ToolTip.Tip="Scheduled cycles keep ticking but every one skips." />
+
+        <Button Content="Resume"
+                Command="{Binding ResumeCommand}"
+                IsVisible="{Binding IsPaused}" />
+
+        <Button Content="Refresh usage" Command="{Binding RefreshUsageCommand}" />
+
+        <!--
+          Force run lives behind an overflow button, never on the toolbar and never focused: it is
+          the one action that bypasses the usage gate and can deliberately burn a weekly cap
+          (plan.md §9.1, §6.1). The command itself also refuses to start without a confirmation.
+        -->
+        <Button Content="⋯" Width="36" ToolTip.Tip="More actions">
+          <Button.Flyout>
+            <Flyout Placement="BottomEdgeAlignedRight">
+              <StackPanel Width="300" Spacing="10" Margin="4">
+
+                <TextBlock Text="Force run" Classes="h2" />
+                <TextBlock Classes="caption"
+                           Text="Ignores the usage threshold and starts Claude even when the quota is nearly spent. You will be asked to confirm." />
+                <Button Content="Force run"
+                        Classes="danger"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Center"
+                        Command="{Binding ForceRunCommand}" />
+
+                <Separator />
+
+                <Button Content="Re-run preflight"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Center"
+                        Command="{Binding RunPreflightCommand}" />
+
+                <Button Content="Clear output pane"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Center"
+                        Command="{Binding ClearOutputCommand}" />
+
+              </StackPanel>
+            </Flyout>
+          </Button.Flyout>
+        </Button>
+
+      </StackPanel>
+    </Grid>
+
+    <!-- ── Gauges and the project card ────────────────────────────────────────────────────── -->
+    <Grid Grid.Row="1" ColumnDefinitions="Auto,*" Margin="0,0,0,12">
+
+      <Border Grid.Column="0" Classes="card" Margin="0,0,12,0">
+        <StackPanel Orientation="Horizontal" Spacing="10">
+          <!--
+            Value and IsUnavailable are bound as a pair. IsUnavailable is what stops an unknown
+            quota rendering as 0% — which reads as "plenty left", the exact misreading this app
+            exists to prevent (plan.md §4.3).
+          -->
+          <controls:UsageGauge Width="168" Height="196"
+                               Value="{Binding SessionGauge.Percent}"
+                               Caption="{Binding SessionGauge.Caption}"
+                               SubCaption="{Binding SessionGauge.SubCaption}"
+                               IsApproximate="{Binding SessionGauge.IsApproximate}"
+                               IsUnavailable="{Binding SessionGauge.IsUnavailable}"
+                               Threshold="{Binding ThresholdPercent}" />
+
+          <controls:UsageGauge Width="168" Height="196"
+                               Value="{Binding WeeklyGauge.Percent}"
+                               Caption="{Binding WeeklyGauge.Caption}"
+                               SubCaption="{Binding WeeklyGauge.SubCaption}"
+                               IsApproximate="{Binding WeeklyGauge.IsApproximate}"
+                               IsUnavailable="{Binding WeeklyGauge.IsUnavailable}"
+                               Threshold="{Binding ThresholdPercent}" />
+        </StackPanel>
+      </Border>
+
+      <Border Grid.Column="1" Classes="card">
+        <StackPanel Spacing="10">
+
+          <TextBlock Text="Project" Classes="h2" />
+
+          <!-- plan.md §9.1: the directory path opens in Explorer. -->
+          <Button Classes="link"
+                  Command="{Binding OpenProjectDirectoryCommand}"
+                  IsVisible="{Binding HasProjectDirectory}"
+                  ToolTip.Tip="Open this folder in the file manager"
+                  HorizontalAlignment="Left">
+            <TextBlock Text="{Binding ProjectDirectory}"
+                       Classes="mono"
+                       TextTrimming="CharacterEllipsis" />
+          </Button>
+
+          <TextBlock Text="No project directory has been set. Settings › Project."
+                     Classes="caption"
+                     IsVisible="{Binding !HasProjectDirectory}" />
+
+          <StackPanel Spacing="5">
+            <TextBlock Text="{Binding PlanItemsSummary}" Classes="caption" />
+            <ProgressBar Minimum="0" Maximum="1"
+                         Height="6"
+                         Value="{Binding PlanProgressFraction}"
+                         IsVisible="{Binding HasPlanItems}" />
+            <StackPanel Orientation="Horizontal" Spacing="14" IsVisible="{Binding HasPlanItems}">
+              <TextBlock Classes="caption ok" Text="{Binding PlanCompletedCount, StringFormat='{}{0} done'}" />
+              <TextBlock Classes="caption" Text="{Binding PlanRemainingCount, StringFormat='{}{0} left'}" />
+              <TextBlock Classes="caption critical"
+                         Text="{Binding PlanBlockedCount, StringFormat='{}{0} blocked'}" />
+            </StackPanel>
+          </StackPanel>
+
+          <Separator />
+
+          <StackPanel Spacing="3">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="Last run" Classes="caption" />
+              <TextBlock Text="{Binding LastRunOutcomeText}" FontSize="12" FontWeight="SemiBold" />
+              <TextBlock Text="{Binding LastRunStartedText}" Classes="caption" />
+            </StackPanel>
+            <TextBlock Text="{Binding LastRunSummary}"
+                       Classes="caption"
+                       MaxLines="3"
+                       TextTrimming="CharacterEllipsis"
+                       IsVisible="{Binding LastRunSummary, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+          </StackPanel>
+
+        </StackPanel>
+      </Border>
+    </Grid>
+
+    <!-- ── Notices: the §6.1 quota block, and the login instructions preflight cannot fix ─── -->
+    <StackPanel Grid.Row="2" Spacing="8" Margin="0,0,0,12">
+
+      <Border Classes="notice" IsVisible="{Binding IsRateLimited}">
+        <StackPanel Spacing="4">
+          <TextBlock Text="Quota exhausted mid-run" Classes="h2" Foreground="{DynamicResource NsWarningBrush}" />
+          <TextBlock Text="{Binding RateLimitMessage}" TextWrapping="Wrap" FontSize="12" />
+        </StackPanel>
+      </Border>
+
+      <Border Classes="notice" IsVisible="{Binding IsLoginInstructionsVisible}">
+        <Grid ColumnDefinitions="*,Auto">
+          <TextBlock Grid.Column="0"
+                     Text="{Binding LoginInstructionsMessage}"
+                     TextWrapping="Wrap"
+                     FontSize="12"
+                     VerticalAlignment="Center" />
+          <Button Grid.Column="1"
+                  Content="Dismiss"
+                  Margin="12,0,0,0"
+                  Command="{Binding DismissLoginInstructionsCommand}" />
+        </Grid>
+      </Border>
+
+    </StackPanel>
+
+    <!-- ── Preflight strip (plan.md §9.1: click a red pill to run its fix) ────────────────── -->
+    <StackPanel Grid.Row="3" Spacing="6" Margin="0,0,0,12">
+
+      <StackPanel Orientation="Horizontal" Spacing="8">
+        <TextBlock Text="Preflight" Classes="h2" VerticalAlignment="Center" />
+        <TextBlock Text="{Binding PreflightSummary}"
+                   Classes="caption"
+                   VerticalAlignment="Center"
+                   TextTrimming="CharacterEllipsis" />
+      </StackPanel>
+
+      <ItemsControl ItemsSource="{Binding PreflightChecks}">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate>
+            <WrapPanel Orientation="Horizontal" />
+          </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+          <DataTemplate x:DataType="vm:PreflightCheckViewModel">
+            <Button Classes="checkpill"
+                    Margin="0,0,6,6"
+                    Command="{Binding ApplyFixCommand}"
+                    IsEnabled="{Binding HasFix}"
+                    ToolTip.Tip="{Binding Message}"
+                    Classes.ok="{Binding IsOk}"
+                    Classes.warning="{Binding IsWarning}"
+                    Classes.error="{Binding IsError}">
+              <StackPanel Orientation="Horizontal" Spacing="6">
+                <TextBlock Text="{Binding Name}" />
+                <TextBlock Text="{Binding FixLabel}"
+                           Opacity="0.75"
+                           IsVisible="{Binding HasFix}" />
+              </StackPanel>
+            </Button>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+
+      <TextBlock Text="{Binding LastFixMessage}"
+                 Classes="caption"
+                 IsVisible="{Binding LastFixMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+
+    </StackPanel>
+
+    <!-- ── Live output pane (plan.md §9.1) ────────────────────────────────────────────────── -->
+    <Border Grid.Row="4" Classes="card" Padding="0" MinHeight="140">
+      <DockPanel LastChildFill="True">
+
+        <Border DockPanel.Dock="Top"
+                Padding="10,7"
+                BorderBrush="{DynamicResource NsCardBorderBrush}"
+                BorderThickness="0,0,0,1">
+          <Grid ColumnDefinitions="Auto,*,Auto">
+
+            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6">
+              <Button Content="Copy" Command="{Binding CopyOutputCommand}" />
+              <Button Content="Open log" Command="{Binding OpenLogCommand}" />
+              <Button Content="Stop run"
+                      Classes="danger"
+                      Command="{Binding StopRunCommand}"
+                      ToolTip.Tip="Cancels a run started from this window. A run the background scheduler owns cannot be cancelled from here." />
+            </StackPanel>
+
+            <TextBlock Grid.Column="1"
+                       Classes="caption"
+                       Margin="12,0"
+                       VerticalAlignment="Center"
+                       TextTrimming="CharacterEllipsis"
+                       Text="{Binding OutputDroppedLineCount, StringFormat='{}{0:N0} earlier lines dropped — the full transcript is on disk'}"
+                       IsVisible="{Binding IsOutputTruncated}" />
+
+            <CheckBox Grid.Column="2"
+                      Content="Follow output"
+                      IsChecked="{Binding AutoScrollOutput, Mode=TwoWay}" />
+
+          </Grid>
+        </Border>
+
+        <ScrollViewer x:Name="OutputScroll"
+                      Padding="12,10"
+                      Background="{DynamicResource NsCodeBrush}"
+                      HorizontalScrollBarVisibility="Auto"
+                      VerticalScrollBarVisibility="Auto">
+          <SelectableTextBlock Classes="mono"
+                               Text="{Binding OutputText}"
+                               TextWrapping="NoWrap" />
+        </ScrollViewer>
+
+      </DockPanel>
+    </Border>
+
+    <!-- ── Usage provenance ───────────────────────────────────────────────────────────────── -->
+    <StackPanel Grid.Row="5" Orientation="Horizontal" Spacing="14" Margin="0,10,0,0">
+      <TextBlock Classes="caption" Text="{Binding UsageSource, StringFormat='Usage source: {0}'}" />
+      <TextBlock Classes="caption" Text="{Binding UsageMetric, StringFormat='Gate metric: {0}'}" />
+      <TextBlock Classes="caption" Text="{Binding ThresholdPercent, StringFormat='Threshold: {0:0}%'}" />
+      <TextBlock Classes="caption"
+                 Text="{Binding RunElapsedText, StringFormat='Elapsed: {0}'}"
+                 IsVisible="{Binding IsRunning}" />
+    </StackPanel>
+
+  </Grid>
+
+</UserControl>

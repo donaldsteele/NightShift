@@ -52,6 +52,9 @@ public sealed class PilotSchedulerTests : IDisposable
 
         public bool NextIsResumable { get; set; }
 
+        /// <summary>When set, a blocked run honours cancellation the way a real runner does.</summary>
+        public bool ObserveCancellation { get; set; }
+
         public LaunchMode Mode => LaunchMode.Headless;
 
         public Task<RunRecord> RunAsync(
@@ -75,6 +78,12 @@ public sealed class PilotSchedulerTests : IDisposable
 
             var source = new TaskCompletionSource<RunRecord>(TaskCreationOptions.RunContinuationsAsynchronously);
             _pending.Add(source);
+
+            if (ObserveCancellation)
+            {
+                cancellationToken.Register(() => source.TrySetCanceled(cancellationToken));
+            }
+
             return source.Task;
         }
 
@@ -436,6 +445,65 @@ public sealed class PilotSchedulerTests : IDisposable
     }
 
     [Fact]
+    public async Task A_distant_reported_reset_is_capped_because_resets_at_cannot_be_trusted()
+    {
+        // seven_day.resets_at reports when the oldest tokens age out (~7 days), not when quota
+        // returns; the counter actually resets on a ~72h cycle. Sleeping on that timestamp would
+        // idle the pilot for a week. Independently measured at 71.9h / 72.6h / 72.5h.
+        _runner.NextOutcome = RunOutcome.RateLimited;
+        _runner.NextRateLimitResetsAt = Start.AddDays(7);
+        _settings = _settings with { MaxQuotaWaitHours = 6 };
+
+        var scheduler = CreateScheduler(Usage(20));
+        await scheduler.StartAsync(CancellationToken.None);
+        await Task.Delay(100);
+
+        _time.Advance(TimeSpan.FromMinutes(60));
+        await Task.Delay(200);
+        await scheduler.StopAsync(CancellationToken.None);
+
+        // One hour has elapsed, so the cap lands six hours after that.
+        Assert.Equal(Start.AddMinutes(60).AddHours(6), scheduler.NextRunAt);
+    }
+
+    [Fact]
+    public async Task A_reset_within_the_cap_is_honoured_exactly()
+    {
+        _runner.NextOutcome = RunOutcome.RateLimited;
+        _runner.NextRateLimitResetsAt = Start.AddMinutes(90);
+        _settings = _settings with { MaxQuotaWaitHours = 6 };
+
+        var scheduler = CreateScheduler(Usage(20));
+        await scheduler.StartAsync(CancellationToken.None);
+        await Task.Delay(100);
+
+        _time.Advance(TimeSpan.FromMinutes(60));
+        await Task.Delay(200);
+        await scheduler.StopAsync(CancellationToken.None);
+
+        Assert.Equal(Start.AddMinutes(91), scheduler.NextRunAt);
+    }
+
+    [Fact]
+    public async Task A_persisted_quota_wait_is_capped_on_restart_too()
+    {
+        await _stateStore.SaveAsync(new PilotState
+        {
+            QuotaResumesAtUtc = Start.AddDays(7),
+            NextRunAtUtc = Start.AddMinutes(-5),
+        });
+        _settings = _settings with { MaxQuotaWaitHours = 6 };
+
+        var scheduler = CreateScheduler(Usage(20));
+        await scheduler.StartAsync(CancellationToken.None);
+        await Task.Delay(150);
+        await scheduler.StopAsync(CancellationToken.None);
+
+        Assert.Equal(Start.AddHours(6), scheduler.NextRunAt);
+        Assert.Equal(0, _runner.Calls);
+    }
+
+    [Fact]
     public async Task A_rate_limited_run_without_a_reset_time_falls_back_to_the_interval()
     {
         _runner.NextOutcome = RunOutcome.RateLimited;
@@ -487,6 +555,38 @@ public sealed class PilotSchedulerTests : IDisposable
         var state = await _stateStore.LoadAsync();
         Assert.Equal("stub-session", state.PendingResumeSessionId);
         Assert.Equal(Start.AddHours(2), state.QuotaResumesAtUtc);
+    }
+
+    [Fact]
+    public async Task A_scheduled_run_can_be_stopped_by_the_user()
+    {
+        // plan.md §9.1's Stop button. Cancellation otherwise only travels down the token passed to
+        // RunNowAsync, which a background cycle does not have — so without this the only way to stop
+        // a scheduled run would be to kill the app.
+        _runner.ObserveCancellation = true;
+        _runner.BlockUntilReleased = true;
+        var scheduler = CreateScheduler(Usage(20));
+
+        var running = scheduler.RunNowAsync();
+        await Task.Delay(80);
+
+        Assert.True(scheduler.StopCurrentRun());
+
+        var completed = await running;
+
+        Assert.Equal(RunOutcome.Failed, completed.Record!.Outcome);
+        Assert.Equal("Stopped by the user.", completed.Record.SkipDetail);
+
+        var recorded = await _history.ReadAllAsync();
+        Assert.Contains(recorded, r => r.SkipDetail == "Stopped by the user.");
+    }
+
+    [Fact]
+    public void Stopping_when_nothing_is_running_is_a_no_op()
+    {
+        var scheduler = CreateScheduler(Usage(20));
+
+        Assert.False(scheduler.StopCurrentRun());
     }
 
     [Fact]

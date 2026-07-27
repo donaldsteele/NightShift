@@ -1,0 +1,500 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:cfg="using:NightShift.Core.Configuration"
+             xmlns:usage="using:NightShift.Core.Usage"
+             xmlns:vm="using:NightShift.Desktop.ViewModels"
+             mc:Ignorable="d" d:DesignWidth="784" d:DesignHeight="700"
+             x:Class="NightShift.Desktop.Views.SettingsView"
+             x:DataType="vm:SettingsViewModel">
+
+  <!-- plan.md §9.2: seven cards, saved on change with a debounce. There is no OK/Cancel. -->
+
+  <UserControl.Styles>
+    <Style Selector="TextBlock.field">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Margin" Value="0,4,0,0" />
+    </Style>
+  </UserControl.Styles>
+
+  <DockPanel LastChildFill="True">
+
+    <!-- ── Header and the save indicator ──────────────────────────────────────────────────── -->
+    <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="20,18,20,10">
+      <StackPanel Grid.Column="0" Spacing="2">
+        <TextBlock Text="Settings" Classes="h1" />
+        <TextBlock Text="Every change is saved automatically a moment after you stop typing."
+                   Classes="caption" />
+      </StackPanel>
+
+      <StackPanel Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Right" Spacing="2">
+        <TextBlock Text="Saving…"
+                   Classes="caption"
+                   HorizontalAlignment="Right"
+                   IsVisible="{Binding HasPendingChanges}" />
+        <!-- Nested so "Saved" only appears once something has actually been saved this session;
+             a bare "Saved" with no time reads as a claim the app cannot yet make. -->
+        <StackPanel IsVisible="{Binding !HasPendingChanges}">
+          <TextBlock Text="{Binding LastSavedAt, StringFormat='Saved {0:t}'}"
+                     Classes="caption"
+                     HorizontalAlignment="Right"
+                     IsVisible="{Binding LastSavedAt, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        </StackPanel>
+        <TextBlock Text="{Binding SaveError}"
+                   Classes="caption critical"
+                   HorizontalAlignment="Right"
+                   MaxWidth="360"
+                   IsVisible="{Binding SaveError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+      </StackPanel>
+    </Grid>
+
+    <!--
+      The insets are a Margin on the content, not Padding on the ScrollViewer. A ScrollViewer
+      arranges its content inside its padding but measures it against the full viewport, so a card
+      holding text wide enough to wrap desires the un-padded width and then overflows the window by
+      exactly the padding. A Margin is subtracted from both passes.
+
+      Horizontal scrolling is disabled so the measure is against the viewport rather than infinity.
+    -->
+    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                  HorizontalScrollBarVisibility="Disabled">
+      <!-- Stretch, not Left: with Left the panel takes its MaxWidth whatever the window is. -->
+      <StackPanel Spacing="12"
+                  MaxWidth="820"
+                  Margin="20,0,20,20"
+                  HorizontalAlignment="Stretch">
+
+        <!-- ── 1. Project ───────────────────────────────────────────────────────────────── -->
+        <Border Classes="card">
+          <StackPanel Spacing="8">
+            <TextBlock Text="Project" Classes="h2" />
+            <TextBlock Text="The directory Claude Code is pointed at, and the plan file it works through."
+                       Classes="caption" />
+
+            <TextBlock Text="Project directory" Classes="field" />
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBox Grid.Column="0"
+                       Classes="mono"
+                       Text="{Binding ProjectDirectory, Mode=TwoWay}"
+                       PlaceholderText="C:\code\your-project" />
+              <Button Grid.Column="1"
+                      Content="Browse…"
+                      Margin="8,0,0,0"
+                      Command="{Binding BrowseProjectDirectoryCommand}" />
+            </Grid>
+
+            <TextBlock Text="Plan file name" Classes="field" />
+            <TextBox Classes="mono"
+                     Width="240"
+                     HorizontalAlignment="Left"
+                     Text="{Binding PlanFileName, Mode=TwoWay}"
+                     PlaceholderText="plan.md" />
+          </StackPanel>
+        </Border>
+
+        <!-- ── 2. Schedule ──────────────────────────────────────────────────────────────── -->
+        <Border Classes="card">
+          <StackPanel Spacing="8">
+            <TextBlock Text="Schedule" Classes="h2" />
+
+            <TextBlock Text="Interval between checks (minutes)" Classes="field" />
+            <NumericUpDown Width="180"
+                           HorizontalAlignment="Left"
+                           FormatString="0"
+                           Increment="5"
+                           Minimum="{Binding Source={x:Static vm:SettingsViewModel.IntervalMinimum}}"
+                           Maximum="{Binding Source={x:Static vm:SettingsViewModel.IntervalMaximum}}"
+                           Value="{Binding IntervalMinutes, Mode=TwoWay}" />
+
+            <CheckBox Content="Run once on startup" IsChecked="{Binding RunOnStartup, Mode=TwoWay}" />
+
+            <CheckBox Content="Start with Windows"
+                      IsChecked="{Binding StartWithWindows, Mode=TwoWay}"
+                      IsEnabled="{Binding IsStartWithWindowsSupported}" />
+            <TextBlock Text="Only available on Windows."
+                       Classes="caption"
+                       IsVisible="{Binding !IsStartWithWindowsSupported}" />
+            <TextBlock Text="{Binding StartWithWindowsError}"
+                       Classes="caption critical"
+                       IsVisible="{Binding StartWithWindowsError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+
+            <CheckBox Content="Start minimized to the tray" IsChecked="{Binding StartMinimized, Mode=TwoWay}" />
+            <TextBlock Text="With this on, closing the window hides it to the tray instead of quitting."
+                       Classes="caption" />
+
+            <CheckBox Content="Wake at the next quota reset instead of on a blind interval"
+                      IsChecked="{Binding AlignToQuotaReset, Mode=TwoWay}" />
+
+            <TextBlock Text="Grace period after a reset (minutes)" Classes="field" />
+            <NumericUpDown Width="180"
+                           HorizontalAlignment="Left"
+                           FormatString="0"
+                           Increment="1"
+                           Minimum="{Binding Source={x:Static vm:SettingsViewModel.QuotaResetGraceMinimum}}"
+                           Maximum="{Binding Source={x:Static vm:SettingsViewModel.QuotaResetGraceMaximum}}"
+                           Value="{Binding QuotaResetGraceMinutes, Mode=TwoWay}"
+                           IsEnabled="{Binding AlignToQuotaReset}" />
+            <TextBlock Text="Waking a minute late costs nothing; waking a minute early wastes the cycle."
+                       Classes="caption" />
+          </StackPanel>
+        </Border>
+
+        <!-- ── 3. Usage gate ────────────────────────────────────────────────────────────── -->
+        <Border Classes="card">
+          <StackPanel Spacing="8">
+            <TextBlock Text="Usage gate" Classes="h2" />
+            <TextBlock Text="The rule that decides whether a cycle is allowed to launch Claude."
+                       Classes="caption" />
+
+            <TextBlock Text="{Binding ThresholdPercent, StringFormat='Skip the run at or above {0:0}% usage'}"
+                       Classes="field" />
+            <Grid ColumnDefinitions="*,Auto" MaxWidth="520" HorizontalAlignment="Left">
+              <Slider Grid.Column="0"
+                      Width="380"
+                      Minimum="{Binding Source={x:Static vm:SettingsViewModel.ThresholdMinimum}}"
+                      Maximum="{Binding Source={x:Static vm:SettingsViewModel.ThresholdMaximum}}"
+                      TickFrequency="5"
+                      IsSnapToTickEnabled="True"
+                      Value="{Binding ThresholdPercent, Mode=TwoWay}" />
+              <TextBlock Grid.Column="1"
+                         VerticalAlignment="Center"
+                         Margin="12,0,0,0"
+                         FontWeight="SemiBold"
+                         Text="{Binding ThresholdPercent, StringFormat='{}{0:0}%'}" />
+            </Grid>
+
+            <TextBlock Text="Compare the threshold against" Classes="field" />
+            <ComboBox Width="280"
+                      HorizontalAlignment="Left"
+                      ItemsSource="{Binding UsageMetricOptions}"
+                      SelectedItem="{Binding UsageMetric, Mode=TwoWay}">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="cfg:UsageMetric">
+                  <TextBlock Text="{Binding Path=., Converter={StaticResource SettingsLabel}}" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+
+            <TextBlock Text="When no usage figure can be read" Classes="field" />
+            <ComboBox Width="280"
+                      HorizontalAlignment="Left"
+                      ItemsSource="{Binding UsageUnavailableOptions}"
+                      SelectedItem="{Binding OnUsageUnavailable, Mode=TwoWay}">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="cfg:UsageUnavailableBehavior">
+                  <TextBlock Text="{Binding Path=., Converter={StaticResource SettingsLabel}}" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+            <TextBlock Text="Skipping is the safe default: silently burning quota on a broken reading is worse than a missed cycle."
+                       Classes="caption" />
+          </StackPanel>
+        </Border>
+
+        <!-- ── 4. Claude ────────────────────────────────────────────────────────────────── -->
+        <Border Classes="card">
+          <StackPanel Spacing="8">
+            <TextBlock Text="Claude" Classes="h2" />
+
+            <TextBlock Text="Executable path (blank uses auto-detection)" Classes="field" />
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBox Grid.Column="0"
+                       Classes="mono"
+                       Text="{Binding ClaudeExecutablePath, Mode=TwoWay}"
+                       PlaceholderText="{Binding DetectedClaudePath}" />
+              <Button Grid.Column="1"
+                      Content="Locate…"
+                      Margin="8,0,0,0"
+                      Command="{Binding BrowseClaudeExecutableCommand}" />
+            </Grid>
+            <TextBlock Classes="caption"
+                       Text="{Binding DetectedClaudePath, StringFormat='Auto-detected: {0}'}"
+                       IsVisible="{Binding DetectedClaudePath, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+
+            <Expander Header="Where auto-detection looked"
+                      IsVisible="{Binding !!ClaudeProbedPaths.Count}">
+              <ItemsControl ItemsSource="{Binding ClaudeProbedPaths}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="x:String">
+                    <TextBlock Text="{Binding Path=.}" Classes="mono caption" />
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </Expander>
+
+            <TextBlock Text="Launch mode" Classes="field" />
+            <StackPanel Orientation="Horizontal" Spacing="16">
+              <RadioButton GroupName="LaunchMode"
+                           Content="Headless (logged)"
+                           IsChecked="{Binding IsHeadless, Mode=TwoWay}" />
+              <RadioButton GroupName="LaunchMode"
+                           Content="Visible terminal"
+                           IsChecked="{Binding IsVisibleTerminal, Mode=TwoWay}" />
+            </StackPanel>
+
+            <TextBlock Text="Model (blank uses the account default)" Classes="field" />
+            <TextBox Classes="mono"
+                     Width="280"
+                     HorizontalAlignment="Left"
+                     Text="{Binding Model, Mode=TwoWay}"
+                     PlaceholderText="default" />
+
+            <TextBlock Text="Session strategy" Classes="field" />
+            <ComboBox Width="320"
+                      HorizontalAlignment="Left"
+                      ItemsSource="{Binding ResumeStrategyOptions}"
+                      SelectedItem="{Binding ResumeStrategy, Mode=TwoWay}">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="cfg:ResumeStrategy">
+                  <TextBlock Text="{Binding Path=., Converter={StaticResource SettingsLabel}}" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+
+            <StackPanel Orientation="Horizontal" Spacing="24">
+              <StackPanel Spacing="4">
+                <TextBlock Text="Max run duration (minutes)" Classes="field" />
+                <NumericUpDown Width="180"
+                               FormatString="0"
+                               Minimum="1"
+                               Maximum="600"
+                               Increment="5"
+                               Value="{Binding MaxRunDurationMinutes, Mode=TwoWay}" />
+              </StackPanel>
+              <StackPanel Spacing="4">
+                <TextBlock Text="Stall timeout (minutes)" Classes="field" />
+                <NumericUpDown Width="180"
+                               FormatString="0"
+                               Minimum="1"
+                               Maximum="120"
+                               Increment="1"
+                               Value="{Binding StallTimeoutMinutes, Mode=TwoWay}" />
+              </StackPanel>
+            </StackPanel>
+            <TextBlock Text="The stall timeout is what rescues a run that has stopped emitting anything — for instance one sitting on a permission prompt."
+                       Classes="caption" />
+          </StackPanel>
+        </Border>
+
+        <!-- ── 5. Autonomy ──────────────────────────────────────────────────────────────── -->
+        <Border Classes="card">
+          <StackPanel Spacing="8">
+            <TextBlock Text="Autonomy" Classes="h2" />
+            <TextBlock Text="What a run is allowed to do without a human in the loop."
+                       Classes="caption" />
+
+            <TextBlock Text="Permission mode" Classes="field" />
+            <ComboBox Width="560"
+                      HorizontalAlignment="Left"
+                      ItemsSource="{Binding PermissionModeOptions}"
+                      SelectedItem="{Binding PermissionMode, Mode=TwoWay}">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="cfg:PermissionMode">
+                  <TextBlock Text="{Binding Path=., Converter={StaticResource SettingsLabel}}" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+            <TextBlock Text="{Binding AutoModeAvailabilityText}" Classes="caption" />
+
+            <!-- plan.md §9.2: bypassPermissions is an explicit, loud opt-in. -->
+            <Border Classes="danger"
+                    IsVisible="{Binding PermissionMode, Converter={StaticResource EnumEquals}, ConverterParameter=BypassPermissions}">
+              <StackPanel Spacing="4">
+                <TextBlock Text="bypassPermissions turns off every check"
+                           FontWeight="SemiBold"
+                           Foreground="{DynamicResource NsCriticalBrush}" />
+                <TextBlock Classes="caption"
+                           Text="No permission prompts and no destructive-action classifier. Anything the model decides to run, runs — including deletions and pushes. Use it only in a repository you would be happy to lose." />
+              </StackPanel>
+            </Border>
+
+            <CheckBox Content="Auto-trust the project folder"
+                      IsChecked="{Binding AutoTrustProjectFolder, Mode=TwoWay}" />
+            <TextBlock Classes="caption"
+                       Text="Without this, Claude Code shows a one-time 'do you trust this folder?' prompt that an unattended run will sit on forever." />
+
+            <StackPanel Spacing="4" IsVisible="{Binding !!TrustKeysPreview.Count}">
+              <TextBlock Classes="caption"
+                         Text="{Binding TrustConfigPath, StringFormat='These keys will be written to {0}:'}" />
+              <Border Classes="code">
+                <ItemsControl ItemsSource="{Binding TrustKeysPreview}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="x:String">
+                      <SelectableTextBlock Text="{Binding Path=.}" Classes="mono" />
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </Border>
+            </StackPanel>
+
+            <TextBlock Text="Allowed tools" Classes="field" />
+            <TextBox Classes="mono"
+                     Text="{Binding AllowedTools, Mode=TwoWay}"
+                     PlaceholderText="Bash,Read,Edit,Write,Glob,Grep" />
+
+            <!-- plan.md §9.2: the trust fallback, off by default, red. -->
+            <Border Classes="danger">
+              <StackPanel Spacing="6">
+                <CheckBox Content="Trust fallback: skip permissions entirely"
+                          IsChecked="{Binding SkipPermissionsFallback, Mode=TwoWay}" />
+                <TextBlock Classes="caption"
+                           Text="Disables all permission checking and the classifier with it. Isolated repositories only. This is the last resort when a run cannot be made to start any other way." />
+              </StackPanel>
+            </Border>
+
+            <!-- plan.md §9.2: the detected permissions.ask rules, and why they matter. -->
+            <StackPanel Spacing="6" IsVisible="{Binding HasPermissionsAskRules}">
+              <TextBlock Text="Detected permissions.ask rules" Classes="field" />
+              <Border Classes="notice">
+                <StackPanel Spacing="6">
+                  <TextBlock Text="These will hang a run."
+                             FontWeight="SemiBold"
+                             Foreground="{DynamicResource NsWarningBrush}" />
+                  <TextBlock Text="{x:Static vm:SettingsViewModel.PermissionsAskNote}"
+                             Classes="caption"
+                             TextWrapping="Wrap" />
+                  <ItemsControl ItemsSource="{Binding PermissionsAskRules}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="x:String">
+                        <SelectableTextBlock Text="{Binding Path=.}" Classes="mono" />
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                  <Button Content="Open the settings file"
+                          HorizontalAlignment="Left"
+                          Command="{Binding OpenPermissionsSettingsFileCommand}" />
+                </StackPanel>
+              </Border>
+            </StackPanel>
+
+            <Expander Header="Settings files scanned for ask rules">
+              <ItemsControl ItemsSource="{Binding ScannedSettingsFiles}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="x:String">
+                    <TextBlock Text="{Binding Path=.}" Classes="mono caption" />
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </Expander>
+          </StackPanel>
+        </Border>
+
+        <!-- ── 6. Prompt ────────────────────────────────────────────────────────────────── -->
+        <Border Classes="card">
+          <StackPanel Spacing="8">
+            <TextBlock Text="Prompt" Classes="h2" />
+
+            <TextBlock Text="Caveman level" Classes="field" />
+            <ComboBox Width="220"
+                      HorizontalAlignment="Left"
+                      ItemsSource="{Binding CavemanLevelOptions}"
+                      SelectedItem="{Binding CavemanLevel, Mode=TwoWay}">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="cfg:CavemanLevel">
+                  <TextBlock Text="{Binding Path=., Converter={StaticResource SettingsLabel}}" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Grid.Column="0" Text="Prompt template" Classes="field" VerticalAlignment="Center" />
+              <Button Grid.Column="1"
+                      Content="Reset to default"
+                      Command="{Binding ResetPromptTemplateCommand}"
+                      IsEnabled="{Binding !IsPromptTemplateDefault}" />
+            </Grid>
+            <TextBox Classes="mono"
+                     AcceptsReturn="True"
+                     TextWrapping="Wrap"
+                     Height="140"
+                     Text="{Binding PromptTemplate, Mode=TwoWay}" />
+
+            <TextBlock Text="Live preview — this is the exact string a run is launched with" Classes="field" />
+            <Border Classes="code" MaxHeight="200">
+              <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <SelectableTextBlock Text="{Binding PromptPreview}" Classes="mono" TextWrapping="Wrap" />
+              </ScrollViewer>
+            </Border>
+          </StackPanel>
+        </Border>
+
+        <!-- ── 7. Advanced ──────────────────────────────────────────────────────────────── -->
+        <Border Classes="card">
+          <StackPanel Spacing="8">
+            <TextBlock Text="Advanced" Classes="h2" />
+
+            <TextBlock Text="Usage provider order" Classes="field" />
+            <ComboBox Width="280"
+                      HorizontalAlignment="Left"
+                      ItemsSource="{Binding UsageProviderOrderOptions}"
+                      SelectedItem="{Binding UsageProviderOrder, Mode=TwoWay}">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="usage:UsageProviderPreference">
+                  <TextBlock Text="{Binding Path=., Converter={StaticResource SettingsLabel}}" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+
+            <TextBlock Text="ccusage command override" Classes="field" />
+            <TextBox Classes="mono"
+                     Text="{Binding CcusageCommandOverride, Mode=TwoWay}"
+                     PlaceholderText="npx ccusage@latest blocks --json" />
+
+            <TextBlock Text="Runs to keep in history" Classes="field" />
+            <NumericUpDown Width="180"
+                           HorizontalAlignment="Left"
+                           FormatString="0"
+                           Minimum="10"
+                           Maximum="10000"
+                           Increment="10"
+                           Value="{Binding HistoryRetentionCount, Mode=TwoWay}" />
+
+            <CheckBox Content="Dry run — go through the whole cycle and log the command line, but never spawn Claude"
+                      IsChecked="{Binding DryRun, Mode=TwoWay}" />
+
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button Content="Open app data folder" Command="{Binding OpenAppDataFolderCommand}" />
+              <Button Content="Restore ~/.claude.json backup"
+                      Command="{Binding RestoreClaudeJsonBackupCommand}"
+                      IsEnabled="{Binding HasClaudeJsonBackup}"
+                      ToolTip.Tip="{Binding ClaudeJsonBackupPath}" />
+            </StackPanel>
+            <TextBlock Classes="caption" Text="{Binding AppDataDirectory}" />
+            <TextBlock Classes="caption"
+                       Text="{Binding RestoreBackupStatus}"
+                       IsVisible="{Binding RestoreBackupStatus, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+            <TextBlock Classes="caption critical"
+                       Text="{Binding NoticeMessage}"
+                       IsVisible="{Binding NoticeMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+
+            <!-- plan.md §9.2: collapsed by default, and "$defaults" is always spliced back in. -->
+            <Expander Header="autoMode.environment (Claude Code's own settings.json)">
+              <StackPanel Spacing="8">
+                <TextBlock Classes="caption"
+                           Text="One entry per line. &quot;$defaults&quot; is added automatically on every write and cannot be removed here — dropping it would strip Claude Code's own baseline environment." />
+                <TextBlock Classes="caption mono" Text="{Binding AutoModeEnvironmentPath}" />
+                <TextBox Classes="mono"
+                         AcceptsReturn="True"
+                         Height="110"
+                         Text="{Binding AutoModeEnvironmentText, Mode=TwoWay}" />
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <Button Content="Write" Command="{Binding SaveAutoModeEnvironmentCommand}" />
+                  <Button Content="Reload" Command="{Binding ReloadAutoModeEnvironmentCommand}" />
+                </StackPanel>
+                <TextBlock Classes="caption"
+                           Text="{Binding AutoModeEnvironmentStatus}"
+                           IsVisible="{Binding AutoModeEnvironmentStatus, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+              </StackPanel>
+            </Expander>
+
+          </StackPanel>
+        </Border>
+
+      </StackPanel>
+    </ScrollViewer>
+
+  </DockPanel>
+
+</UserControl>

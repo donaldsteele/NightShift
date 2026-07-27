@@ -559,6 +559,7 @@ Make the mode a per-project setting with a radio group in the UI, exactly as spe
 >   firing exactly on it races the server's clock and reads the window that is about to close.
 > - Reset timestamps are absolute, so a snapshot stays useful for anchoring long after it was taken
 >   — including across a run that outlasted the window.
+> - **`resets_at` is not when your quota comes back.** See the warning below.
 > - `AlignToQuotaReset` (default on) turns the whole behaviour off for anyone who wants a strict
 >   metronome.
 >
@@ -578,6 +579,39 @@ Make the mode a per-project setting with a radio group in the UI, exactly as spe
   6. Otherwise → `Run`.
 - `RunGate` is a `SemaphoreSlim(1,1)`; a run that outlasts the interval simply causes the next
   tick to skip with `AlreadyRunning`. Never queue up runs.
+
+> ## ⚠ `seven_day.resets_at` cannot be trusted as "when quota returns"
+>
+> Corroborated against two independent community sources (2026-07-26), plus the shape of the
+> endpoint used by the `she-llac/claude-counter` browser extension, which reads the same payload
+> from `claude.ai/api/organizations/{orgId}/usage`:
+>
+> - `resets_at` reports **when the oldest tokens age out of the rolling window** — roughly seven
+>   days ahead — not when a fresh allocation arrives.
+> - The `seven_day` counter actually resets on a **~72-hour cycle**. Measured across three
+>   consecutive cycles at **71.9h, 72.6h, 72.5h** (±0.6h).
+> - Separately observed: weekly utilization dropping **60% → 2%** while `resets_at` still claimed
+>   nine hours in the future. (Reported to Anthropic, closed as "not related to Claude Code".)
+> - None of this is documented by Anthropic.
+>
+> **Consequences for §6's anchoring rule.** The general rule is safe by construction: it only ever
+> moves a check *earlier*, so a too-distant `resets_at` is simply never selected. The dangerous path
+> is §6.1's rate-limit wait, which is the one place a check moves *later*. Left uncapped, a pilot
+> blocked on the weekly window would sleep for up to a week on a timestamp that was wrong by four
+> days.
+>
+> Hence `MaxQuotaWaitHours` (default **6**, clamped 1–72): the wait is `min(resets_at + grace,
+> now + MaxQuotaWaitHours)`, applied both in-session and when a quota wait is restored after a
+> restart. A usage check costs one cached HTTP call — re-checking early is strictly cheaper than
+> being wrong. **Do not "simplify" this cap away.**
+>
+> Secondary note: the `/usage` endpoint appears to report **whole-number** percentages (our live
+> capture: `five_hour` 14, `seven_day` 37), while the stream's `rate_limit_event` carries an
+> unrounded fraction (`0.36`) for the same window minutes apart. `claude-counter` makes the same
+> observation about the web endpoint being rounded relative to its SSE `message_limit` data. Our
+> threshold comparison is therefore accurate to about ±0.5pp when it uses the endpoint; the
+> unrounded figure is available mid-run and is already surfaced as
+> `ClaudeRateLimitEvent.UtilizationPercent` if finer gating is ever wanted.
 
 ### 6.1 Running out of quota *mid-task*
 
@@ -616,6 +650,12 @@ as its own outcome, `RunOutcome.RateLimited`, because nothing is broken — the 
 - Expose `RunNowCommand` that bypasses the interval but **still honours the usage check**,
   plus `ForceRunCommand` (shift-click / explicit menu item) that bypasses the usage check with
   a confirmation dialog.
+- `StopCurrentRun()` cancels whatever run is in flight, **whoever started it**. §9.1 asks for a
+  "Stop run" button but nothing in the original plan let the UI reach a run the *background
+  scheduler* owns — cancellation travelled only down the token passed to `RunNowAsync`, which a
+  scheduled cycle never has, so the button could only ever have worked for window-initiated runs.
+  Each cycle now links its own `CancellationTokenSource`, and a user-stopped run is recorded in
+  history ("Stopped by the user.") rather than vanishing.
 
 ---
 
@@ -851,10 +891,32 @@ Single-instance enforcement via a named `Mutex`; a second launch surfaces the ex
   skips rather than concurrent launches; restarting the app preserves the schedule.
 
 ### Phase 5 — UI
-- [ ] `UsageGauge` control.
-- [ ] Dashboard, Settings, History views + view models, all bound to Core services via DI.
-- [ ] Live output streaming with a bounded ring buffer and smooth auto-scroll.
-- [ ] Tray icon, single-instance mutex, start-with-Windows (registry `Run` key, HKCU).
+- [x] `UsageGauge` control. Verified by headless Skia renders at twelve sizes in both theme
+      variants. `NaN` behaves as unknown, and the unknown state draws a **dotted** ring with a dash
+      — never `0%`, which reads as "plenty of quota left".
+- [x] Dashboard, Settings, History views + view models, all bound to Core services via DI.
+      `TableView` rather than `DataGrid` (Avalonia 12 deprecates the latter for read-only tables),
+      and `AvaloniaUseCompiledBindingsByDefault` so a binding typo is a build error.
+- [x] Live output streaming with a bounded ring buffer and smooth auto-scroll. `input_json_delta`
+      fragments and tool results are excluded, and the duplicate that arrives as both deltas and a
+      whole message is suppressed.
+- [x] Tray icon, single-instance mutex, start-with-Windows (registry `Run` key, HKCU).
+- **Two threading bugs found by driving the real app, not by tests.** Worth recording because the
+  symptom in each case was silent or fatal rather than a failing assertion:
+  1. `IRelayCommand.NotifyCanExecuteChanged()` raises `CanExecuteChanged` **synchronously on the
+     calling thread**, and Avalonia throws when a bound command does that off the UI thread. It fired
+     on every startup (aborting dashboard initialisation) and again the instant a manual run ended —
+     the latter would have taken the app down.
+  2. Rebuilding a bound `ObservableCollection` off the UI thread **corrupts the target**: Avalonia
+     posts the notifications, so `Clear()`'s `Reset` lands after the collection has been refilled and
+     the queued `Add`s replay. Twelve preflight pills rendered as twenty-four.
+  Both bite specifically after `await … ConfigureAwait(false)`. Fixed at source via
+  `ViewModelBase.OnUiThread`, not with a view-layer workaround.
+- **Acceptance met.** The app was driven through UI Automation: all three sections navigate, gauges
+  show live figures with reset countdowns, twelve preflight pills render once each, `Force run`
+  confirms with Cancel focused, History loads transcripts and searches them, close-to-tray keeps the
+  process alive, a second launch surfaces the existing window, and a settings toggle flipped 200 ms
+  before close still reached `settings.json` — proving `ShutdownAsync` flushes the debounce.
 - **Acceptance:** every setting in §9.2 round-trips to disk and takes effect without a restart;
   the dashboard reflects a real run end-to-end; the app survives being left running for an hour.
 

@@ -3,6 +3,12 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!--
+      Compiled bindings everywhere. A reflection binding that names a property the view model does
+      not have fails at run time and prints a line nobody reads; the same typo under compiled
+      bindings is a build error, which is the only way a UI this large stays honest.
+    -->
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
   </PropertyGroup>
 
   <ItemGroup>
