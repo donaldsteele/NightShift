@@ -60,6 +60,9 @@ public partial class App : Application
         services.AddSingleton<IFolderPicker>(sp => sp.GetRequiredService<StorageProviderPathPicker>());
         services.AddSingleton<IFilePicker>(sp => sp.GetRequiredService<StorageProviderPathPicker>());
         services.AddSingleton<IConfirmationService, DialogConfirmationService>();
+
+        services.AddSingleton<PlanWindowPresenter>();
+        services.AddSingleton<IPlanWindowPresenter>(sp => sp.GetRequiredService<PlanWindowPresenter>());
     }
 
     /// <summary>
@@ -182,6 +185,9 @@ public partial class App : Application
 
         if (_tray is not null && _viewModel?.Settings.StartMinimized == true)
         {
+            // The plan window is deliberately unowned, so Win32 will not hide it along with this
+            // one. Left alone it would sit on screen with no visible parent and no way back to it.
+            Services?.GetService<IPlanWindowPresenter>()?.Hide();
             _window?.Hide();
             return;
         }
@@ -218,6 +224,10 @@ public partial class App : Application
         }
 
         await _lifetime.CancelAsync().ConfigureAwait(true);
+
+        // PlanWindow cancels an ordinary close and hides instead, so a real exit has to close it
+        // programmatically or the process is left holding a window nothing can dismiss.
+        (Services?.GetService<IPlanWindowPresenter>() as PlanWindowPresenter)?.Close();
 
         _tray?.Dispose();
         _tray = null;

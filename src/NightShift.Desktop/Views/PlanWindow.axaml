@@ -1,0 +1,19 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:views="using:NightShift.Desktop.Views"
+        xmlns:vm="using:NightShift.Desktop.ViewModels"
+        x:Class="NightShift.Desktop.Views.PlanWindow"
+        x:DataType="vm:PlanDocumentViewModel"
+        Title="Plan — NightShift"
+        Width="900" Height="760"
+        MinWidth="520" MinHeight="360"
+        WindowStartupLocation="CenterOwner">
+
+  <!--
+    Deliberately not owned by the main window. Closing the main window can mean "hide to tray", and
+    on Win32 hiding an owner hides everything it owns, so the plan window would vanish and showing
+    the main window again would not bring it back. The presenter hides and shows this one itself.
+  -->
+
+  <views:PlanDocumentView x:Name="Contents" />
+</Window>

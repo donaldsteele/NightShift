@@ -67,13 +67,17 @@ public sealed partial class DashboardViewModel : ViewModelBase, IDisposable
     readonly IConfirmationService _confirmation;
     readonly IFolderPicker _folderPicker;
     readonly IFilePicker _filePicker;
+    readonly IPlanWindowPresenter _planWindow;
     readonly ILogger<DashboardViewModel> _logger;
     readonly TimeProvider _time;
     readonly OutputPaneWriter _output;
 
+    readonly PlanDocumentViewModel _plan;
+
     readonly EventHandler<CycleCompleted> _onCycleCompleted;
     readonly EventHandler<RunProgress> _onRunProgress;
     readonly EventHandler<PilotSettings> _onSettingsChanged;
+    readonly EventHandler _onPlanSaved;
 
     CancellationTokenSource? _manualRunCts;
     DateTimeOffset _lastOutputNotify = DateTimeOffset.MinValue;
@@ -100,6 +104,8 @@ public sealed partial class DashboardViewModel : ViewModelBase, IDisposable
         IConfirmationService confirmation,
         IFolderPicker folderPicker,
         IFilePicker filePicker,
+        IPlanWindowPresenter planWindow,
+        PlanDocumentViewModel plan,
         ILogger<DashboardViewModel> logger,
         TimeProvider? timeProvider = null,
         int outputCapacityLines = OutputRingBuffer.DefaultCapacity)
@@ -118,6 +124,8 @@ public sealed partial class DashboardViewModel : ViewModelBase, IDisposable
         _confirmation = confirmation ?? throw new ArgumentNullException(nameof(confirmation));
         _folderPicker = folderPicker ?? throw new ArgumentNullException(nameof(folderPicker));
         _filePicker = filePicker ?? throw new ArgumentNullException(nameof(filePicker));
+        _planWindow = planWindow ?? throw new ArgumentNullException(nameof(planWindow));
+        _plan = plan ?? throw new ArgumentNullException(nameof(plan));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _time = timeProvider ?? TimeProvider.System;
         _output = new OutputPaneWriter(new OutputRingBuffer(outputCapacityLines));
@@ -129,9 +137,21 @@ public sealed partial class DashboardViewModel : ViewModelBase, IDisposable
         _onRunProgress = (_, progress) => _dispatcher.Post(() => OnRunProgress(progress));
         _onSettingsChanged = (_, updated) => _dispatcher.Post(() => ApplySettings(updated));
 
+        // Ticking a box in the plan window and watching this card not change is what makes the two
+        // look unrelated. Skipped while a run is live: preflight reads the same file, and
+        // CycleCompleted re-runs it anyway.
+        _onPlanSaved = (_, _) => _dispatcher.Post(() =>
+        {
+            if (!IsRunning)
+            {
+                _ = RunPreflightAsync(CancellationToken.None);
+            }
+        });
+
         _scheduler.CycleCompleted += _onCycleCompleted;
         _scheduler.RunProgress += _onRunProgress;
         _settings.SettingsChanged += _onSettingsChanged;
+        _plan.Saved += _onPlanSaved;
 
         ApplySettings(_settings.Current);
         IsPaused = !_scheduler.IsEnabled;
@@ -461,6 +481,7 @@ public sealed partial class DashboardViewModel : ViewModelBase, IDisposable
         _scheduler.CycleCompleted -= _onCycleCompleted;
         _scheduler.RunProgress -= _onRunProgress;
         _settings.SettingsChanged -= _onSettingsChanged;
+        _plan.Saved -= _onPlanSaved;
         _manualRunCts?.Dispose();
         _manualRunCts = null;
     }
@@ -639,6 +660,17 @@ public sealed partial class DashboardViewModel : ViewModelBase, IDisposable
             StatusMessage = $"Could not open {ProjectDirectory}.";
         }
     }
+
+    /// <summary>
+    /// Opens the plan in NightShift's own window rather than handing it to the OS.
+    /// </summary>
+    /// <remarks>
+    /// The preflight "Open the plan file" fix still shells out, and still should — it is offered
+    /// when the plan is empty or finished, which is when the user most likely wants their own
+    /// editor. This is the everyday path, and it is on the card the tally is already printed on.
+    /// </remarks>
+    [RelayCommand(CanExecute = nameof(HasProjectDirectory))]
+    void OpenPlan() => _planWindow.Show();
 
     [RelayCommand]
     void DismissLoginInstructions() => LoginInstructionsMessage = string.Empty;
@@ -857,6 +889,7 @@ public sealed partial class DashboardViewModel : ViewModelBase, IDisposable
             ApplyGateMetric(_lastSnapshot);
 
             OpenProjectDirectoryCommand.NotifyCanExecuteChanged();
+            OpenPlanCommand.NotifyCanExecuteChanged();
         });
     }
 

@@ -294,3 +294,63 @@ sealed class FakeRunHistoryEditor : IRunHistoryEditor
         return Task.FromResult(Result);
     }
 }
+
+/// <summary>Records whether the plan window was asked to show.</summary>
+sealed class FakePlanWindowPresenter : IPlanWindowPresenter
+{
+    public int ShowCount { get; private set; }
+
+    public int HideCount { get; private set; }
+
+    public void Show() => ShowCount++;
+
+    public void Hide() => HideCount++;
+}
+
+/// <summary>
+/// A watcher the test drives directly, so a "the file changed" test needs no disk and no race.
+/// </summary>
+sealed class FakeFileWatcher : IFileWatcher
+{
+    public string? Watching { get; private set; }
+
+    public int StopCount { get; private set; }
+
+    public event EventHandler? Changed;
+
+    public void Watch(string path) => Watching = path;
+
+    public void Stop()
+    {
+        StopCount++;
+        Watching = null;
+    }
+
+    public void Dispose() => Stop();
+
+    /// <summary>Raises the change the real watcher would have raised.</summary>
+    public void RaiseChanged() => Changed?.Invoke(this, EventArgs.Empty);
+}
+
+/// <summary>Captures a terminal launch instead of opening one.</summary>
+sealed class FakeClaudeTerminalLauncher : IClaudeTerminalLauncher
+{
+    public bool Result { get; set; } = true;
+
+    public string? Error { get; set; }
+
+    public List<(string Executable, string Directory, string Mode, string? Prompt, string? Extra)> Launches { get; } = [];
+
+    public bool TryLaunch(
+        string executablePath,
+        string workingDirectory,
+        string cliMode,
+        string? seedPrompt,
+        string? extraArguments,
+        out string? error)
+    {
+        Launches.Add((executablePath, workingDirectory, cliMode, seedPrompt, extraArguments));
+        error = Result ? null : Error ?? "no terminal";
+        return Result;
+    }
+}

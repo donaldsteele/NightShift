@@ -46,6 +46,10 @@ sealed class ViewModelHarness : IDisposable
         Confirmation = new FakeConfirmationService();
         Picker = new FakePathPicker();
         HistoryEditor = new FakeRunHistoryEditor();
+        PlanWindow = new FakePlanWindowPresenter();
+        Watcher = new FakeFileWatcher();
+        Terminal = new FakeClaudeTerminalLauncher();
+        Locator = new FakeExecutableLocator();
         Dispatcher = ImmediateUiDispatcher.Instance;
 
         Usage = new CompositeUsageProvider(
@@ -97,6 +101,14 @@ sealed class ViewModelHarness : IDisposable
 
     public FakeRunHistoryEditor HistoryEditor { get; }
 
+    public FakePlanWindowPresenter PlanWindow { get; }
+
+    public FakeFileWatcher Watcher { get; }
+
+    public FakeClaudeTerminalLauncher Terminal { get; }
+
+    public FakeExecutableLocator Locator { get; }
+
     public IUiDispatcher Dispatcher { get; }
 
     public RunHistoryStore History { get; }
@@ -104,6 +116,26 @@ sealed class ViewModelHarness : IDisposable
     public PilotStateStore StateStore { get; }
 
     public PilotScheduler Scheduler { get; }
+
+    /// <summary>
+    /// The plan window's view model. One per harness, so a dashboard and the plan it refreshes from
+    /// are the same pair the app wires up.
+    /// </summary>
+    public PlanDocumentViewModel CreatePlan(TimeSpan? watchDebounce = null) =>
+        _plan ??= new PlanDocumentViewModel(
+            Settings,
+            Scheduler,
+            Watcher,
+            Confirmation,
+            Clipboard,
+            Locator,
+            Terminal,
+            Dispatcher,
+            NullLogger<PlanDocumentViewModel>.Instance,
+            Time,
+            watchDebounce ?? TimeSpan.FromMilliseconds(400));
+
+    PlanDocumentViewModel? _plan;
 
     public DashboardViewModel CreateDashboard(int outputCapacityLines = OutputRingBuffer.DefaultCapacity) =>
         new(
@@ -120,6 +152,8 @@ sealed class ViewModelHarness : IDisposable
             Confirmation,
             Picker,
             Picker,
+            PlanWindow,
+            CreatePlan(),
             NullLogger<DashboardViewModel>.Instance,
             Time,
             outputCapacityLines);
@@ -164,15 +198,70 @@ sealed class ViewModelHarness : IDisposable
     public MainWindowViewModel CreateMainWindow(
         DashboardViewModel? dashboard = null,
         HistoryViewModel? history = null,
-        SettingsViewModel? settings = null) =>
+        SettingsViewModel? settings = null,
+        PlanDocumentViewModel? plan = null) =>
         new(
             dashboard ?? CreateDashboard(),
             history ?? CreateHistory(),
             settings ?? CreateSettings(),
+            plan ?? CreatePlan(),
             Scheduler,
             Dispatcher,
             NullLogger<MainWindowViewModel>.Instance,
             Time);
+
+    /// <summary>
+    /// Starts a real cycle and leaves it running, so <c>RunProgress</c> has genuinely been raised
+    /// and every view model watching it sees a live run.
+    /// </summary>
+    /// <remarks>
+    /// <c>RunProgress</c> is a field-like event, so nothing outside the scheduler can raise it.
+    /// Driving a real cycle through a held fake runner is the only honest way to test what watchers
+    /// do about one — the same reasoning that put a real <see cref="PilotScheduler"/> in this
+    /// harness. Dispose the returned handle to let the cycle finish.
+    /// </remarks>
+    public async Task<HeldRun> StartHeldRunAsync()
+    {
+        PreflightPasses();
+        UsageProvider.Snapshot = Snapshot(10);
+
+        Runner.Events.Add(new ClaudeInitEvent("{\"type\":\"system\"}"));
+        Runner.Gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        // Waiting on RunProgress rather than on the runner being entered: the fake reports its
+        // events just after signalling Entered, so waiting on Entered races the thing under test.
+        var progressed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void OnProgress(object? sender, RunProgress progress) => progressed.TrySetResult();
+
+        Scheduler.RunProgress += OnProgress;
+        try
+        {
+            var cycle = Scheduler.RunNowAsync(bypassUsageCheck: true);
+            await progressed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            return new HeldRun(Runner.Gate, cycle);
+        }
+        finally
+        {
+            Scheduler.RunProgress -= OnProgress;
+        }
+    }
+
+    /// <summary>A cycle held open, released on dispose.</summary>
+    public sealed record HeldRun(TaskCompletionSource Gate, Task Cycle) : IDisposable
+    {
+        public void Dispose()
+        {
+            Gate.TrySetResult();
+            try
+            {
+                Cycle.Wait(TimeSpan.FromSeconds(5));
+            }
+            catch (AggregateException)
+            {
+                // The cycle's own outcome is not what these tests are about.
+            }
+        }
+    }
 
     /// <summary>An all-green preflight, so a cycle gets as far as the usage gate.</summary>
     public void PreflightPasses() =>

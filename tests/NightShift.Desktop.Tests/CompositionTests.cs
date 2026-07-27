@@ -36,6 +36,9 @@ public class CompositionTests
         Assert.NotNull(main.Dashboard);
         Assert.NotNull(main.History);
         Assert.NotNull(main.Settings);
+        Assert.NotNull(main.Plan);
+
+        // The plan window is not a rail section: it is its own window, opened from the card.
         Assert.Equal(3, main.Sections.Count);
     }
 
@@ -60,6 +63,11 @@ public class CompositionTests
         Assert.Same(
             provider.GetRequiredService<SettingsViewModel>(),
             provider.GetRequiredService<SettingsViewModel>());
+
+        // One plan view model, so the dashboard refreshes off the same instance the window shows.
+        Assert.Same(
+            provider.GetRequiredService<PlanDocumentViewModel>(),
+            provider.GetRequiredService<MainWindowViewModel>().Plan);
     }
 
     [Fact]
@@ -71,6 +79,10 @@ public class CompositionTests
         Assert.IsType<UnavailablePathPicker>(provider.GetRequiredService<IFolderPicker>());
         Assert.IsType<UnavailablePathPicker>(provider.GetRequiredService<IFilePicker>());
         Assert.IsType<DeclineConfirmationService>(provider.GetRequiredService<IConfirmationService>());
+
+        // The plan window's placeholder fails quiet rather than closed: nothing unsafe follows from
+        // a window that did not open, but a silent no-op with no log line reads as a broken button.
+        Assert.IsType<UnavailablePlanWindowPresenter>(provider.GetRequiredService<IPlanWindowPresenter>());
     }
 
     [Fact]

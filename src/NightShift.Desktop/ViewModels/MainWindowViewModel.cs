@@ -70,6 +70,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase, IDisposable
         DashboardViewModel dashboard,
         HistoryViewModel history,
         SettingsViewModel settings,
+        PlanDocumentViewModel plan,
         PilotScheduler scheduler,
         IUiDispatcher dispatcher,
         ILogger<MainWindowViewModel> logger,
@@ -78,6 +79,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase, IDisposable
         Dashboard = dashboard ?? throw new ArgumentNullException(nameof(dashboard));
         History = history ?? throw new ArgumentNullException(nameof(history));
         Settings = settings ?? throw new ArgumentNullException(nameof(settings));
+        Plan = plan ?? throw new ArgumentNullException(nameof(plan));
         _scheduler = scheduler ?? throw new ArgumentNullException(nameof(scheduler));
         _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -97,6 +99,12 @@ public sealed partial class MainWindowViewModel : ViewModelBase, IDisposable
 
         RefreshStatus();
     }
+
+    /// <summary>
+    /// The plan window's view model. Held here rather than only in the presenter so an unsaved
+    /// edit is flushed on the same shutdown path that flushes a settings debounce.
+    /// </summary>
+    public PlanDocumentViewModel Plan { get; }
 
     /// <summary>plan.md §9.1.</summary>
     public DashboardViewModel Dashboard { get; }
@@ -281,6 +289,18 @@ public sealed partial class MainWindowViewModel : ViewModelBase, IDisposable
             _logger.LogError(ex, "Could not flush pending settings on shutdown.");
         }
 
+        try
+        {
+            // Asks rather than saves. Settings are small and reversible; a plan is a document a
+            // background run is also writing to, and silently saving over what that run just
+            // committed is the one outcome nobody could undo.
+            await Plan.FlushAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "Could not flush an unsaved plan edit on shutdown.");
+        }
+
         Dispose();
     }
 
@@ -299,6 +319,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase, IDisposable
         Dashboard.Dispose();
         History.Dispose();
         Settings.Dispose();
+        Plan.Dispose();
     }
 
     // ── Navigation ─────────────────────────────────────────────────────────────────────────────

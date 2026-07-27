@@ -48,6 +48,12 @@
     <ProjectReference Include="..\NightShift.Core\NightShift.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Same reason as NightShift.Core: tests reach implementation details that are not worth
+         widening a view model's surface for. -->
+    <InternalsVisibleTo Include="NightShift.Desktop.Tests" />
+  </ItemGroup>
+
   <!--
     The native SkiaSharp/HarfBuzz packages ship their own .pdb files, which the managed symbol
     switches above do not reach: 105 MB of symbols for libraries we do not debug, in a download

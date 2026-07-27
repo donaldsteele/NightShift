@@ -492,6 +492,24 @@ Implementation notes:
 - [ ] Assert in tests that the built argument list always contains `--permission-mode` and never
       contains `--bare` or `plan`.
 
+> **Refinement (2026-07-27): "never plan mode" is a rule about *unattended* runs.**
+>
+> The plan window's **Edit with Claude** opens an attended session with `--permission-mode plan`,
+> and that is not a breach of the bullet above — it is the case the bullet exists to distinguish.
+> Plan mode ends by waiting for a human to approve; here the human is sitting in front of it, and
+> waiting is the point.
+>
+> Nothing about the unattended path changes. `PermissionMode` still has no `Plan` member,
+> `ToCliValue` still throws outside its three, `ClaudeArgumentsBuilder` still guards, and
+> `The_argument_list_never_selects_plan_mode` still passes untouched. The attended launch reaches
+> `IClaudeTerminalLauncher` directly with the mode as a **string**, which is why the enum never had
+> to be widened — widening it would have put plan mode in the settings dropdown and into the
+> scheduler, which is exactly the failure this section prevents.
+>
+> The session is also not a run: no `RunGate`, no history row, no transcript, and no workspace
+> trust write. It bypasses `IClaudeRunner` entirely, because that contract requires a `RunRecord`
+> for every outcome and manufacturing one would put a user's own typing in the History tab.
+
 ### 5.4 Headless mode (`LaunchMode.Headless`)
 
 ```
@@ -833,6 +851,37 @@ string never reaches the sink.
 > marking milestones only once shipping begins, so the early ones carry no marker and a literal
 > reading calls a nearly finished project barely started. An explicit `**Blocked:**` beats the
 > backfill; a milestone someone deliberately flagged is never quietly counted as done.
+
+> **Refinement (2026-07-27): the plan can be read and edited inside NightShift.**
+>
+> The card printed the tally and offered no way to look at what it was counting. The only route to
+> the file was the preflight "Open the plan file" fix, which shells out — and that pill is only
+> offered when the plan is empty or finished, so a healthy plan could not be opened from the app at
+> all. The plan block on the Project card is now a button, and the "⋯" flyout carries the same
+> command for when there is no tally to click on yet.
+>
+> **`PlanWindow`** is a separate, non-modal, unowned window holding `PlanDocumentView`. Unowned
+> deliberately: closing the main window can mean "hide to tray", and on Win32 hiding an owner hides
+> everything it owns, so an owned plan window would vanish and never come back. The presenter hides
+> and shows it explicitly instead. One window and one `PlanDocumentViewModel`, both singletons —
+> there is one project and one plan, and a second window would only be a second unsaved buffer.
+>
+> **Rendering is hand-rolled** (`NightShift.Core.Markdown` → `Controls/MarkdownView`). No free
+> stable markdown renderer targets Avalonia 12, and none of them know this app's vocabulary anyway:
+> `- [!]` and `— **delivered …**` are facts the tally already counts, and a general renderer prints
+> both as literal text. The reader shares `PlanParser`'s fence walk, checkbox pattern and marker
+> constants, so the window and the card cannot disagree about the same file.
+>
+> **Saving is explicit and byte-preserving.** Never on a timer: this is a document a run is also
+> writing to. The file's encoding, byte-order mark, line endings and trailing newline are captured
+> on read and re-applied on write, or a two-line edit would report every line as changed at the next
+> `git status`. A successful save re-runs preflight so the card's counts move immediately.
+>
+> **The file is watched, and a conflict is a question, not an action.** A change on disk with a
+> clean buffer reloads silently; with unsaved edits it raises an inline notice — never a modal,
+> because the change usually arrives mid-run and a modal would trap the user away from the dashboard
+> — offering **Keep mine** or **Load theirs**, with what each version counts. Our own save coming
+> back through the watcher is recognised by content, not by a timing window.
 >
 > **The gate figure gets a number and an age.** `HighestOfAll` maximises over four windows but only
 > two have gauges, so a gate driven by `seven_day_opus` moved nothing on screen — which reads as a

@@ -1,0 +1,114 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:controls="using:NightShift.Desktop.Controls"
+             xmlns:vm="using:NightShift.Desktop.ViewModels"
+             mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="720"
+             x:Class="NightShift.Desktop.Views.PlanDocumentView"
+             x:DataType="vm:PlanDocumentViewModel">
+
+  <DockPanel LastChildFill="True">
+
+    <!-- ── Header: what this is, and the same tally the dashboard card shows ───────────────── -->
+    <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="20,18,20,10">
+      <StackPanel Grid.Column="0" Spacing="2">
+        <TextBlock Text="{Binding PlanFileName}" Classes="h1" />
+        <TextBlock Text="{Binding PlanPath}"
+                   Classes="caption mono"
+                   TextTrimming="CharacterEllipsis" />
+      </StackPanel>
+
+      <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+        <TextBlock Text="{Binding ItemSummary}"
+                   Classes="caption"
+                   VerticalAlignment="Center"
+                   IsVisible="{Binding ItemSummary, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+
+        <Button Content="Edit"
+                Command="{Binding BeginEditCommand}"
+                IsVisible="{Binding IsReading}" />
+        <Button Content="Save"
+                Command="{Binding SaveCommand}"
+                IsVisible="{Binding IsEditing}" />
+        <Button Content="Cancel"
+                Command="{Binding CancelEditCommand}"
+                IsVisible="{Binding IsEditing}" />
+        <Button Content="Edit with Claude…"
+                Command="{Binding EditWithClaudeCommand}"
+                ToolTip.Tip="Opens Claude in plan mode, in this project, so you can work on the plan together" />
+      </StackPanel>
+    </Grid>
+
+    <!-- ── Notices, stacked above the document so nothing is hidden behind a modal ─────────── -->
+    <StackPanel DockPanel.Dock="Top" Spacing="8" Margin="20,0,20,10">
+
+      <!-- The run warning: two writers on one file is how work disappears. -->
+      <Border Classes="notice" IsVisible="{Binding IsRunning}">
+        <TextBlock Text="A run is working in this project right now. It may be editing this file."
+                   TextWrapping="Wrap" />
+      </Border>
+
+      <Border Classes="danger" IsVisible="{Binding HasError}">
+        <TextBlock Text="{Binding ErrorMessage}" TextWrapping="Wrap" />
+      </Border>
+
+      <!--
+        The conflict bar is deliberately not a dialog. The change usually arrives mid-run, and a
+        modal would trap the user in this window and away from the dashboard that explains why.
+      -->
+      <Border Classes="notice" IsVisible="{Binding HasConflict}">
+        <StackPanel Spacing="8">
+          <TextBlock Text="This plan changed on disk while you were editing it."
+                     FontWeight="SemiBold"
+                     TextWrapping="Wrap" />
+          <TextBlock Text="Your changes are still here and have not been saved."
+                     TextWrapping="Wrap" />
+          <TextBlock Text="{Binding ConflictDetail}" Classes="caption" TextWrapping="Wrap" />
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Content="Keep mine" Command="{Binding KeepMineCommand}" />
+            <Button Content="Load theirs" Command="{Binding LoadTheirsCommand}" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+
+    <!-- ── Status line ────────────────────────────────────────────────────────────────────── -->
+    <Border DockPanel.Dock="Bottom"
+            Background="{DynamicResource NsRailBrush}"
+            Padding="20,6"
+            IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+      <TextBlock Text="{Binding StatusMessage}" Classes="caption" TextWrapping="Wrap" />
+    </Border>
+
+    <!-- ── The document, rendered or raw ──────────────────────────────────────────────────── -->
+    <Panel>
+      <!--
+        Margin on the content rather than Padding on the ScrollViewer, for the reason SettingsView
+        records: a ScrollViewer arranges inside its padding but measures against the full viewport,
+        so wrapping text overflows by exactly the padding.
+      -->
+      <ScrollViewer VerticalScrollBarVisibility="Auto"
+                    HorizontalScrollBarVisibility="Disabled"
+                    IsVisible="{Binding IsReading}">
+        <controls:MarkdownView x:Name="Rendered"
+                               Document="{Binding Document}"
+                               Margin="20,0,20,20"
+                               MaxWidth="900"
+                               HorizontalAlignment="Stretch" />
+      </ScrollViewer>
+
+      <!-- Matches the transcript editor in HistoryView: mono, no wrapping, no line numbers. -->
+      <TextBox Text="{Binding RawText, Mode=TwoWay}"
+               Classes="mono"
+               AcceptsReturn="True"
+               AcceptsTab="True"
+               TextWrapping="NoWrap"
+               BorderThickness="0"
+               Margin="20,0,20,20"
+               Background="{DynamicResource NsCodeBrush}"
+               IsVisible="{Binding IsEditing}" />
+    </Panel>
+
+  </DockPanel>
+</UserControl>

@@ -63,6 +63,12 @@
 
                 <Separator />
 
+                <!-- Also here, so the plan is reachable before there is a tally to click on. -->
+                <Button Content="Open the plan"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Center"
+                        Command="{Binding OpenPlanCommand}" />
+
                 <Button Content="Re-run preflight"
                         HorizontalAlignment="Stretch"
                         HorizontalContentAlignment="Center"
@@ -141,19 +147,32 @@
                      Classes="caption"
                      IsVisible="{Binding !HasProjectDirectory}" />
 
-          <StackPanel Spacing="5">
-            <TextBlock Text="{Binding PlanItemsSummary}" Classes="caption" />
-            <ProgressBar Minimum="0" Maximum="1"
-                         Height="6"
-                         Value="{Binding PlanProgressFraction}"
-                         IsVisible="{Binding HasPlanItems}" />
-            <StackPanel Orientation="Horizontal" Spacing="14" IsVisible="{Binding HasPlanItems}">
-              <TextBlock Classes="caption ok" Text="{Binding PlanCompletedCount, StringFormat='{}{0} done'}" />
-              <TextBlock Classes="caption" Text="{Binding PlanRemainingCount, StringFormat='{}{0} left'}" />
-              <TextBlock Classes="caption critical"
-                         Text="{Binding PlanBlockedCount, StringFormat='{}{0} blocked'}" />
+          <!--
+            A Button rather than a click handler, because that is the whole keyboard story: it is
+            tab-stoppable and Space/Enter-activatable for free. Same shape as the project path
+            above it.
+          -->
+          <Button Classes="link"
+                  Command="{Binding OpenPlanCommand}"
+                  HorizontalAlignment="Stretch"
+                  HorizontalContentAlignment="Stretch"
+                  ToolTip.Tip="Open the plan in NightShift">
+            <StackPanel Spacing="5">
+              <TextBlock Text="{Binding PlanItemsSummary}" Classes="caption" />
+              <!-- Not hit-testable, or it swallows the click meant for the button. -->
+              <ProgressBar Minimum="0" Maximum="1"
+                           Height="6"
+                           IsHitTestVisible="False"
+                           Value="{Binding PlanProgressFraction}"
+                           IsVisible="{Binding HasPlanItems}" />
+              <StackPanel Orientation="Horizontal" Spacing="14" IsVisible="{Binding HasPlanItems}">
+                <TextBlock Classes="caption ok" Text="{Binding PlanCompletedCount, StringFormat='{}{0} done'}" />
+                <TextBlock Classes="caption" Text="{Binding PlanRemainingCount, StringFormat='{}{0} left'}" />
+                <TextBlock Classes="caption critical"
+                           Text="{Binding PlanBlockedCount, StringFormat='{}{0} blocked'}" />
+              </StackPanel>
             </StackPanel>
-          </StackPanel>
+          </Button>
 
           <Separator />
 

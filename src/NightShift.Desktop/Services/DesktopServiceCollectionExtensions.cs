@@ -60,6 +60,9 @@ public static class DesktopServiceCollectionExtensions
         services.TryAddSingleton<IFolderPicker>(sp => sp.GetRequiredService<UnavailablePathPicker>());
         services.TryAddSingleton<IFilePicker>(sp => sp.GetRequiredService<UnavailablePathPicker>());
         services.TryAddSingleton<IConfirmationService, DeclineConfirmationService>();
+        services.TryAddSingleton<IPlanWindowPresenter, UnavailablePlanWindowPresenter>();
+
+        services.TryAddSingleton<IFileWatcher, FileSystemFileWatcher>();
     }
 
     static void AddViewModels(IServiceCollection services)
@@ -67,6 +70,7 @@ public static class DesktopServiceCollectionExtensions
         services.TryAddSingleton<DashboardViewModel>();
         services.TryAddSingleton<HistoryViewModel>();
         services.TryAddSingleton<SettingsViewModel>();
+        services.TryAddSingleton<PlanDocumentViewModel>();
         services.TryAddSingleton<MainWindowViewModel>();
     }
 }
