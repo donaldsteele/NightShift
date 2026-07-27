@@ -35,6 +35,16 @@ public enum SkipReason
     OverThreshold,
     UsageUnavailable,
     DryRun,
+
+    /// <summary>
+    /// The plan has nothing left to work on — every checkbox ticked, or every milestone delivered.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="PreflightFailed"/> because a finished plan is not a failure. It is
+    /// its own reason so the History tab can say "nothing to do" rather than "blocked", which are
+    /// very different things to read at breakfast.
+    /// </remarks>
+    NoWorkLeft,
 }
 
 /// <summary>

@@ -425,7 +425,8 @@ Bare mode skips discovery of skills, plugins, hooks, MCP servers and `CLAUDE.md`
 OAuth/keychain auth. It would break both the caveman skill and subscription authentication at once.
 It is the single most likely mistake in a build like this, so a test asserts the constructed
 argument list never contains `--bare` — and never contains `plan`, the permission mode that ends by
-waiting for a human.
+waiting for a human. (The plan window's **Edit with Claude** does use plan mode, but that session is
+attended and never goes near this argument list; see [Reading and editing the plan](#reading-and-editing-the-plan).)
 
 ---
 
@@ -438,10 +439,14 @@ waiting for a human.
 4. Fetch usage, bypassing the 60s cache. Unavailable → apply the *When no usage figure can be
    read* setting. A force run reads usage too — it bypasses the *gate*, not the reading, so the
    gauges are still right afterwards.
-5. `metric >= threshold` → `Skipped(OverThreshold)`, and the next check is anchored to the
+5. **Anything left to do?** A plan whose every checkbox is ticked, or whose every milestone is
+   delivered, is `Skipped(NoWorkLeft)` — it does not launch Claude to be told there is nothing to
+   do. A plan with *no* items at all still runs, because "not written yet" is not "finished", and
+   so does one preflight could not read. Force run goes through regardless.
+6. `metric >= threshold` → `Skipped(OverThreshold)`, and the next check is anchored to the
    **blocking** window's reset, not the earliest reset overall.
-6. Otherwise, run.
-7. When the run ends, **read usage again**. That is the figure the dashboard shows and the one the
+7. Otherwise, run.
+8. When the run ends, **read usage again**. That is the figure the dashboard shows and the one the
    next check is scheduled against; the pre-run snapshot is by then a reading from before Claude
    spent anything. Mid-run, `rate_limit_event` messages from the CLI move the 5-hour gauge live, at
    no extra HTTP cost.

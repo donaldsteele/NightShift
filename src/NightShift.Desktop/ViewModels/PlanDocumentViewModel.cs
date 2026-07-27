@@ -574,11 +574,36 @@ public sealed partial class PlanDocumentViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        var hadOne = HasPlanPath;
+
         PlanPath = path;
         BeginEditCommand.NotifyCanExecuteChanged();
         SaveCommand.NotifyCanExecuteChanged();
         EditWithClaudeCommand.NotifyCanExecuteChanged();
+
+        if (!hadOne)
+        {
+            // Nothing was loaded yet; the view loads when it opens.
+            return;
+        }
+
+        // The app is now pointed at a different file. Showing the previous project's plan under
+        // the new project's name is worse than showing nothing, so reload — and drop an edit to
+        // the old file rather than let a later save write it into the new project.
+        IsEditing = false;
+        HasConflict = false;
+        ConflictDetail = string.Empty;
+        StatusMessage = string.Empty;
+        _diskText = string.Empty;
+
+        PendingLoad = LoadAsync();
     }
+
+    /// <summary>
+    /// The load a settings change last started. Exposed so a test can await the work rather than
+    /// sleep and hope, the same way <see cref="PendingReload"/> does for the watcher.
+    /// </summary>
+    internal Task PendingLoad { get; private set; } = Task.CompletedTask;
 
     public void Dispose()
     {

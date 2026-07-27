@@ -366,6 +366,10 @@ public sealed partial class MainWindowViewModel : ViewModelBase, IDisposable
         SkipReason.UsageUnavailable => "Blocked: usage unavailable",
         SkipReason.PreflightFailed => "Blocked: preflight",
         SkipReason.DryRun => "Blocked: dry run",
+
+        // Not "Blocked": a finished plan is the good outcome. Saying blocked here would send the
+        // user hunting for a fault that is not there.
+        SkipReason.NoWorkLeft => "Nothing left to do",
         _ => null,
     };
 

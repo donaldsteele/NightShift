@@ -435,6 +435,30 @@ public sealed class PilotScheduler : BackgroundService
         var usage = await ReadUsageAsync("before the run", cancellationToken).ConfigureAwait(false);
         _lastUsage = usage;
 
+        // A finished plan is not a preflight failure, so it is an amber row rather than a red one
+        // — and amber rows never stop a run. The result was that a plan with everything ticked
+        // still launched Claude on every interval, spending a slot and a chunk of the weekly quota
+        // to be told there was nothing to do. `PreflightChecker.PlanItemsCheck`'s own remarks name
+        // this exact cost; the check just had no way to act on it.
+        //
+        // After the usage read rather than before it, so the gauges and reset times still refresh
+        // on a cycle that does not run. Force run goes through, as it does at every other gate:
+        // the user asking for it explicitly has already been told there is nothing to do.
+        if (trigger != CycleTrigger.ForceRun
+            && preflight.PlanItems is { Total: > 0, HasRemainingWork: false } counts)
+        {
+            var noun = counts.Noun;
+            var detail = counts.Blocked > 0
+                ? $"Nothing to do: {counts.Summary}, and the remaining {counts.Blocked} " +
+                  $"{noun}{(counts.Blocked == 1 ? " is" : "s are")} marked blocked."
+                : $"Nothing to do: {counts.Summary}.";
+
+            var nothing = CycleDecision.Skip(SkipReason.NoWorkLeft, detail);
+            _logger.LogInformation("Cycle skipped (no work left): {Detail}", detail);
+            await RecordSkipAsync(nothing, cancellationToken).ConfigureAwait(false);
+            return Complete(trigger, nothing, null);
+        }
+
         var decision = trigger == CycleTrigger.ForceRun
             ? CycleDecision.Run(usage, usage.Select(settings.UsageMetric), "Force run: the usage check was bypassed by the user.")
             : CycleDecisionMaker.FromUsage(settings, usage);

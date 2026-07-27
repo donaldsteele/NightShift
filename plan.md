@@ -635,6 +635,46 @@ spaces are ordinary on Windows. `RemoteControlName` overrides it entirely.
 >   skip only when the previous history row is not already a skip for the same reason; a recorded
 >   run resets that. A quiet night is one line, which is what the history was for.
 
+> **Correction (2026-07-27): a finished plan stopped the pilot, but only in the wording.**
+> `PreflightChecker.PlanItemsCheck` reports "every checkbox is already ticked" as an **amber** row,
+> and §7's rule is that amber never blocks — an untrusted folder or an auto-mode downgrade are
+> things an unattended run survives. A finished plan is not. The result was that a plan with
+> nothing left launched Claude on every interval, spending a slot and a chunk of the weekly quota
+> to be told there was nothing to do. That check's own remarks name this exact cost; it simply had
+> no way to act on it, and `CanRun => !HasErrors` was never going to give it one.
+>
+> The gate is now in the scheduler as `SkipReason.NoWorkLeft`, deliberately **not** by promoting
+> the row to red: a finished plan is the good outcome, and a red row would say "Blocked" and send
+> the user hunting for a fault that is not there. The status pill reads *Nothing left to do*.
+>
+> Three cases must still run, and each has a test:
+> - **No items at all.** "Not written yet" is not "finished", and a plan whose format is being
+>   detected the other way round must not silently park the pilot forever.
+> - **Counts unreadable.** Preflight returning null means it could not read the file; refusing to
+>   run then would turn a transient read failure into a pilot that never starts again.
+> - **Force run.** As at every other gate — the user asking explicitly has already been told on the
+>   card that there is nothing to do.
+>
+> The check sits **after** the usage read rather than before it, so a pilot parked on a finished
+> plan still refreshes its gauges and reset times. Freezing those was the other half of what "the
+> number never refreshes" looked like.
+
+> **Correction (2026-07-27): pointing the app at a different repository did not re-read the plan.**
+> `DashboardViewModel.ApplySettings` copied labels and stopped, and nothing else re-ran preflight
+> on a settings change — the only triggers were a scheduler cycle, an applied fix, and the manual
+> button. So switching projects left the previous one's tally, pills and plan rows on screen,
+> reporting one project's progress under another project's name until the next cycle came round.
+>
+> Preflight now re-runs when the project directory, the plan file name, or the plan format changes,
+> and only then: everything else on the Settings screen saves on a debounce as the user types, and
+> re-scanning per keystroke would be a scan per character. The first application is skipped because
+> it comes from the constructor, with `InitializeAsync` about to establish the first preflight
+> anyway — treating it as a change would scan twice on every launch.
+>
+> The plan window follows the same change, and **drops an unsaved edit to the old file when it
+> does**. Carrying that buffer across would mean a later save writing one project's text into
+> another project's plan.
+
 > **Refinement: the schedule anchors itself to quota resets.**
 > The interval alone is blind — it can park a check in the middle of a window and leave the pilot
 > idle across the moment its quota came back. Every usage snapshot carries `resets_at` for the

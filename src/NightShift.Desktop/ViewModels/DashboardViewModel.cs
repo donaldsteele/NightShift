@@ -874,6 +874,18 @@ public sealed partial class DashboardViewModel : ViewModelBase, IDisposable
     {
         var normalized = settings.Normalized();
 
+        // Which plan file the card is describing. Changing any of these makes every plan row and
+        // count on screen describe a file the app is no longer pointed at.
+        // Not on the first call: that one comes from the constructor, and InitializeAsync is about
+        // to establish the first preflight either from the scheduler's or by running one.
+        var planChanged = _settingsApplied
+            && (!string.Equals(normalized.ProjectDirectory, ProjectDirectory, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(normalized.PlanFileName, PlanFileName, StringComparison.OrdinalIgnoreCase)
+                || normalized.PlanFormat != _planFormat);
+
+        _planFormat = normalized.PlanFormat;
+        _settingsApplied = true;
+
         // NotifyCanExecuteChanged raises CanExecuteChanged synchronously, and Avalonia throws when a
         // bound command does that off the UI thread — which is exactly where this lands when it is
         // reached from an awaited continuation.
@@ -890,8 +902,22 @@ public sealed partial class DashboardViewModel : ViewModelBase, IDisposable
 
             OpenProjectDirectoryCommand.NotifyCanExecuteChanged();
             OpenPlanCommand.NotifyCanExecuteChanged();
+
+            // Point the app at a different repository and the card kept the old one's tally, its
+            // preflight pills and its plan rows until the next cycle or a manual re-run — reporting
+            // one project's progress under another project's name. Settings changes did not re-run
+            // preflight at all; only a cycle, a fix or the button did.
+            if (planChanged)
+            {
+                _ = RunPreflightAsync(CancellationToken.None);
+            }
         });
     }
+
+    /// <summary>The plan format last seen, so a change to it can be noticed like the other two.</summary>
+    PlanFormat _planFormat = new PilotSettings().PlanFormat;
+
+    bool _settingsApplied;
 
     void ApplyUsage(UsageSnapshot snapshot)
     {
