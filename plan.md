@@ -1003,21 +1003,41 @@ Single-instance enforcement via a named `Mutex`; a second launch surfaces the ex
 
 ## 12. Verification checklist (do this before declaring done)
 
-- [ ] Threshold logic: at 89% it runs, at 90% it skips, at 91% it skips. Unit tested.
-- [ ] Metric selection: `HighestOfAll` blocks when only the weekly window is hot.
-- [ ] A real headless run modifies `plan.md` and commits.
-- [ ] **Zero-interaction proof:** a run against a folder Claude Code has never seen completes
-      without a trust dialog or a permission prompt. Verified twice — once with auto mode
-      available, once with it forced unavailable so the `acceptEdits` fallback is exercised.
-- [ ] `~/.claude.json` survives a trust write with every unrelated key intact (diff the before
-      and after; only the `projects.<path>` object may differ).
-- [ ] A deliberately added `permissions.ask` rule is detected by preflight and surfaced before
-      the run, not discovered by a hang.
-- [ ] Stall detector fires: a fake runner that emits nothing for 11 minutes is killed and
-      recorded as `TimedOut(Stalled)`.
-- [ ] `RunRecord` shows which permission mode was actually used.
-- [ ] Killing the app mid-run does not leave an orphaned `claude` process.
-- [ ] Deleting `settings.json` while running does not crash the app.
-- [ ] Airplane mode: usage unavailable → skip, logged clearly, no exception dialogs.
-- [ ] 401 from the endpoint shows the re-authenticate banner and does not retry-storm.
-- [ ] The published exe starts, minimizes to tray, and fires a scheduled run.
+- [x] Threshold logic: at 89% it runs, at 90% it skips, at 91% it skips. Unit tested.
+- [x] Metric selection: `HighestOfAll` blocks when only the weekly window is hot.
+- [x] A real headless run modifies `plan.md` and commits. (Three conventional commits, all
+      checkboxes ticked, clean tree, 47s, $0.38.)
+- [x] **Zero-interaction proof**, verified twice as required:
+      **auto available** — 47s, $0.38, three commits, tools `Read, Write, Edit, PowerShell` (the
+      PowerShell call is the proof the mode is looser than `acceptEdits`);
+      **auto forced unavailable** — the ladder fell back to `acceptEdits` with the broadened tool
+      list, 40.8s, $0.387, three commits, `RunRecord.PermissionModeUsed = AcceptEdits`.
+      Neither run prompted, hung, or showed a trust dialog.
+- [x] `~/.claude.json` survives a trust write with every unrelated key intact. Verified twice, on
+      the real file and on a byte-copy: all pre-existing project entries and every non-`projects`
+      value byte-identical, only the expected keys added.
+- [x] A deliberately added `permissions.ask` rule is detected by preflight and surfaced before
+      the run.
+- [x] Stall detector fires: killed and recorded as `TimedOut`, with the fake clock.
+- [x] `RunRecord` shows which permission mode was actually used — taken from `system/init`, so it
+      is measured rather than assumed.
+- [x] **Killing the app mid-run does not leave an orphaned `claude` process.**
+      **This failed the first time and the fix is `ProcessJob`.** Measured before: killing only the
+      NightShift process left `claude` alive, and it committed to the repository **7s and 19s after
+      its supervisor was dead**, with no `RunRecord` written — a silent gap in history while an
+      unsupervised agent kept writing. Grandchildren (a `sleep.exe` from a tool call) survived for
+      minutes. Root cause: every guard we had — stall detector, `MaxRunDurationMinutes`,
+      `Kill(entireProcessTree)` — needs our code to be alive to run. A Win32 job object with
+      `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` moves that guarantee into the OS. Re-verified after the
+      fix: `claude` gone within **1 second**, no descendants, no commits after the kill.
+- [x] Deleting `settings.json` while running does not crash the app. Survives because settings are
+      cached in memory; the next save recreates the file atomically.
+- [x] Usage unavailable → skip, logged clearly, no exception dialogs. **Simulated** (unreachable
+      endpoint plus a nonexistent ccusage command), not a real network outage.
+- [x] 401 from the endpoint shows the re-authenticate banner and does not retry-storm. Against the
+      **live** endpoint with a bogus token: 10 calls produced exactly **1** HTTP request.
+- [x] The published exe starts, minimizes to tray, and fires a scheduled run. Tray tooltip read
+      "NightShift — next run in 2m"; the scheduled cycle fired by itself and completed in 31s.
+- [x] Terminal mode opens a real Windows Terminal window in the project directory with no trust
+      prompt, and writes `.nightshift/next-prompt.txt`. (Not in the original checklist; it had never
+      been exercised live.)

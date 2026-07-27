@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using Microsoft.Extensions.Logging;
 
 namespace NightShift.Core.Execution;
 
@@ -54,8 +55,20 @@ public interface IClaudeProcessLauncher
 /// blocking forever in a run with no human present (plan.md §5.3.3).
 /// </para>
 /// </remarks>
-public sealed class ClaudeProcessLauncher : IClaudeProcessLauncher
+public sealed class ClaudeProcessLauncher : IClaudeProcessLauncher, IDisposable
 {
+    readonly ILogger<ClaudeProcessLauncher> _logger;
+    readonly ProcessJob? _job;
+
+    public ClaudeProcessLauncher(ILogger<ClaudeProcessLauncher> logger)
+    {
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+
+        // Created once and held for the app's lifetime. The kill guarantee comes from this handle
+        // being closed — including by the OS when NightShift is terminated without warning.
+        _job = OperatingSystem.IsWindows() ? ProcessJob.TryCreate(logger) : null;
+    }
+
     public IClaudeProcess Start(ClaudeProcessStart start)
     {
         ArgumentNullException.ThrowIfNull(start);
@@ -81,10 +94,25 @@ public sealed class ClaudeProcessLauncher : IClaudeProcessLauncher
         var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         process.Start();
 
+        // Assign before the child gets far. Everything it spawns inherits the job, so a tool call
+        // that starts its own long-running process is covered too.
+        if (OperatingSystem.IsWindows())
+        {
+            _job?.TryAssign(process, _logger);
+        }
+
         // EOF for anything that tries to prompt.
         process.StandardInput.Close();
 
         return new SystemClaudeProcess(process);
+    }
+
+    public void Dispose()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            _job?.Dispose();
+        }
     }
 
     sealed class SystemClaudeProcess(Process process) : IClaudeProcess

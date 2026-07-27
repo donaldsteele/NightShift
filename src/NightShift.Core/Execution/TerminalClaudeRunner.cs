@@ -142,7 +142,13 @@ public sealed class TerminalClaudeRunner : IClaudeRunner
             SkipDetail = DescribeLaunch(resolution.ExecutablePath, settings, decision),
         }).WithSummary(
             $"Terminal launched. Prompt written to {handoff.PromptFilePath}" +
-            (handoff.ClipboardCopied ? " and copied to the clipboard." : "; clipboard copy failed."));
+            (handoff.ClipboardCopied
+                ? " and copied to the clipboard."
+                : _clipboard is null
+                    // "Copy failed" would be a lie when nothing ever tried: Core has no clipboard,
+                    // so a host that does not supply one simply has this feature switched off.
+                    ? "; no clipboard is available in this host, so paste it from there."
+                    : "; the clipboard copy failed, so paste it from there."));
 
         await _history.AppendAsync(launched, cancellationToken).ConfigureAwait(false);
         return launched;

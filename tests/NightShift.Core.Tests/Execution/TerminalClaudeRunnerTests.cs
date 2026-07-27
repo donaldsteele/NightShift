@@ -115,7 +115,7 @@ public sealed class TerminalClaudeRunnerTests : IDisposable
         var record = await CreateRunner(new FakeClipboard(succeeds: false)).RunAsync(Settings());
 
         Assert.Equal(RunOutcome.Launched, record.Outcome);
-        Assert.Contains("clipboard copy failed", record.Summary, StringComparison.Ordinal);
+        Assert.Contains("the clipboard copy failed", record.Summary, StringComparison.Ordinal);
     }
 
     [Fact]
