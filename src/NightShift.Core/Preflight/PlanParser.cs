@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using NightShift.Core.Configuration;
+using NightShift.Core.Markdown;
 
 namespace NightShift.Core.Preflight;
 
@@ -220,20 +221,28 @@ public static partial class PlanParser
 
         static void ReadMarkers(MilestoneState milestone, string text)
         {
-            var trimmed = text.TrimStart();
-
-            if (trimmed.Contains(BlockedMarker, StringComparison.OrdinalIgnoreCase))
-            {
-                milestone.IsBlocked = true;
-            }
-
-            if (trimmed.Contains(DeliveredMarker, StringComparison.OrdinalIgnoreCase)
-                || trimmed.StartsWith(StatusMarker, StringComparison.OrdinalIgnoreCase)
-                || trimmed.StartsWith(PostMilestoneStatusMarker, StringComparison.OrdinalIgnoreCase))
-            {
-                milestone.IsDelivered = true;
-            }
+            milestone.IsBlocked |= MarksBlocked(text);
+            milestone.IsDelivered |= MarksDelivered(text);
         }
+    }
+
+    /// <summary>True when <paramref name="text"/> carries the blocked marker.</summary>
+    /// <remarks>
+    /// Exposed so <see cref="Markdown.MarkdownReader"/> reads a milestone heading with exactly this
+    /// rule. Two implementations of "is this delivered" would eventually disagree, and the
+    /// disagreement would show up as a green pill beside a card that says the opposite.
+    /// </remarks>
+    internal static bool MarksBlocked(string text) =>
+        text.TrimStart().Contains(BlockedMarker, StringComparison.OrdinalIgnoreCase);
+
+    /// <inheritdoc cref="MarksBlocked"/>
+    internal static bool MarksDelivered(string text)
+    {
+        var trimmed = text.TrimStart();
+
+        return trimmed.Contains(DeliveredMarker, StringComparison.OrdinalIgnoreCase)
+            || trimmed.StartsWith(StatusMarker, StringComparison.OrdinalIgnoreCase)
+            || trimmed.StartsWith(PostMilestoneStatusMarker, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>Classifies every milestone, applying the backfill rule described on the caller.</summary>
@@ -272,30 +281,14 @@ public static partial class PlanParser
     }
 
     /// <summary>Every line outside a fenced code block, CR-trimmed.</summary>
-    static IEnumerable<string> ContentLines(string planText)
-    {
-        var inFence = false;
-
-        foreach (var raw in planText.Split('\n'))
-        {
-            var line = raw.TrimEnd('\r');
-            var trimmed = line.TrimStart();
-
-            if (trimmed.StartsWith("```", StringComparison.Ordinal) ||
-                trimmed.StartsWith("~~~", StringComparison.Ordinal))
-            {
-                inFence = !inFence;
-                continue;
-            }
-
-            if (inFence)
-            {
-                continue;
-            }
-
-            yield return line;
-        }
-    }
+    /// <remarks>
+    /// The walk itself lives in <see cref="MarkdownLines"/> because the plan viewer needs the same
+    /// fence rule and the two must not be allowed to drift — a viewer that showed 30 checkboxes
+    /// beside a card reading "28 items" would be the app disagreeing with itself. Fence delimiters
+    /// report <c>InFence</c> too, so this filter drops them exactly as the inline version did.
+    /// </remarks>
+    static IEnumerable<string> ContentLines(string planText) =>
+        MarkdownLines.Walk(planText).Where(line => !line.InFence).Select(line => line.Text);
 
     /// <summary>Written into a milestone heading when it ships; the milestone form of <c>- [x]</c>.</summary>
     internal const string DeliveredMarker = "**delivered";
@@ -322,7 +315,7 @@ public static partial class PlanParser
     /// token is mandatory and word-bounded, which is what keeps ordinary headings out.
     /// </summary>
     [GeneratedRegex(@"^(?<hashes>\#{2,6})[ \t]+M(?<n>\d+)\b(?<rest>.*)$", RegexOptions.CultureInvariant)]
-    private static partial Regex MilestoneHeadingPattern();
+    internal static partial Regex MilestoneHeadingPattern();
 
     sealed class MilestoneState(int number, int level)
     {

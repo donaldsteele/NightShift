@@ -254,4 +254,59 @@ public sealed record PilotSettings
         HistoryRetentionCount = Math.Max(1, HistoryRetentionCount),
         Model = string.IsNullOrWhiteSpace(Model) ? null : Model.Trim(),
     };
+
+    /// <summary>
+    /// The full path to the plan file, or null when there is not one to point at.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Returns null rather than throwing when <see cref="ProjectDirectory"/> is unset or
+    /// <see cref="PlanFileName"/> is not a usable file name — the name is free text a user typed
+    /// into a settings box, so an unusable one is an ordinary outcome rather than a bug. Callers
+    /// that need to explain the failure say so in their own words; there is only one way to fail,
+    /// so no reason code is needed.
+    /// </para>
+    /// <para>
+    /// The character check is explicit because <c>Path.Combine</c> does not do it: .NET Framework
+    /// threw <see cref="ArgumentException"/> for invalid path characters and .NET Core dropped
+    /// that, so the <c>try/catch</c> this helper replaced had quietly stopped catching anything.
+    /// A name with a null character in it now fails here instead of reaching the file system.
+    /// </para>
+    /// </remarks>
+    public string? ResolvePlanPath()
+    {
+        var normalized = Normalized();
+        return ResolvePlanPath(normalized.ProjectDirectory, normalized.PlanFileName);
+    }
+
+    /// <inheritdoc cref="ResolvePlanPath()"/>
+    public static string? ResolvePlanPath(string? projectDirectory, string? planFileName)
+    {
+        if (string.IsNullOrWhiteSpace(projectDirectory) || string.IsNullOrWhiteSpace(planFileName))
+        {
+            return null;
+        }
+
+        if (planFileName.AsSpan().IndexOfAny(InvalidPlanFileNameChars) >= 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            return Path.Combine(projectDirectory, planFileName);
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Characters a plan file name may not contain. <c>Path.GetInvalidPathChars</c> plus the two
+    /// wildcards, which are legal in a path string but never in a name that must resolve to one
+    /// file.
+    /// </summary>
+    static readonly System.Buffers.SearchValues<char> InvalidPlanFileNameChars =
+        System.Buffers.SearchValues.Create([.. Path.GetInvalidPathChars(), '*', '?']);
 }

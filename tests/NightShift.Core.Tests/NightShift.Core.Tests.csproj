@@ -36,4 +36,13 @@
     <Content Include="Fixtures\**\*.json;Fixtures\**\*.jsonl" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!--
+    Plan fixtures for the markdown reader. On disk rather than in string literals for the same
+    reason as the payloads above, plus one specific to these: the agreement tests care about exact
+    bytes — CRLF, a BOM, a missing trailing newline — and a C# literal cannot carry those.
+  -->
+  <ItemGroup>
+    <Content Include="Fixtures\**\*.md" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

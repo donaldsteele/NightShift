@@ -830,15 +830,12 @@ public sealed partial class PreflightChecker : IPreflightChecker
                 Resolve(planFormat));
         }
 
-        string planPath;
-        try
-        {
-            planPath = Path.Combine(projectDirectory, planFileName);
-        }
-        catch (ArgumentException ex)
+        // The plan file name is free text from the settings box, so an unusable one is an ordinary
+        // outcome rather than an exception to catch here.
+        if (PilotSettings.ResolvePlanPath(projectDirectory, planFileName) is not { } planPath)
         {
             return (
-                Error(PreflightCheckId.PlanFile, $"`{planFileName}` is not a usable file name: {ex.Message}"),
+                Error(PreflightCheckId.PlanFile, $"`{planFileName}` is not a usable file name."),
                 Warning(PreflightCheckId.PlanItems, "Not checked: there is no plan file to read."),
                 null,
                 Resolve(planFormat));
@@ -1371,8 +1368,13 @@ public sealed partial class PreflightChecker : IPreflightChecker
         PilotSettings settings,
         CancellationToken cancellationToken)
     {
-        var path = fix.Target ?? Path.Combine(
-            settings.ProjectDirectory, settings.Normalized().PlanFileName);
+        if ((fix.Target ?? settings.ResolvePlanPath()) is not { } path)
+        {
+            return new PreflightFixResult(
+                fix.Command,
+                PreflightFixOutcome.Failed,
+                $"`{settings.Normalized().PlanFileName}` is not a usable file name.");
+        }
 
         if (File.Exists(path))
         {
@@ -1380,13 +1382,10 @@ public sealed partial class PreflightChecker : IPreflightChecker
                 fix.Command, PreflightFixOutcome.AlreadyDone, $"{path} already exists.");
         }
 
-        var directory = Path.GetDirectoryName(Path.GetFullPath(path));
-        if (directory is not null)
-        {
-            Directory.CreateDirectory(directory);
-        }
-
-        await File.WriteAllTextAsync(path, StarterPlanTemplate, cancellationToken).ConfigureAwait(false);
+        // Atomic like every other file this app owns. The plan file gained a second writer with
+        // the plan window, and one non-atomic writer beside an atomic one is a latent bug.
+        await Io.AtomicFile.WriteAllTextAsync(path, StarterPlanTemplate, cancellationToken)
+            .ConfigureAwait(false);
 
         _logger.LogInformation("Created a starter plan file at {Path}.", path);
         return new PreflightFixResult(fix.Command, PreflightFixOutcome.Applied, $"Created {path}.");
