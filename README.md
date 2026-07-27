@@ -317,6 +317,29 @@ of work, so they do not decide the format on their own. Fenced code blocks are s
 formats, so a plan documenting its own conventions does not count its examples.
 Override the detection in **Settings › Project › How the plan states what is left to do**.
 
+### Reading and editing the plan
+
+Click the plan progress on the Dashboard's Project card — the "12 of 30 items complete" line and
+the bar under it — and the plan opens in NightShift, rendered. **Edit** swaps to the raw markdown,
+**Save** (or `Ctrl+S`) writes it back and the card's counts move immediately. `Esc` closes when
+there is nothing unsaved and asks when there is.
+
+Three things about it are worth knowing, because a run is writing to the same file:
+
+- **Saving preserves the file's bytes.** Its encoding, byte-order mark, line endings and trailing
+  newline all survive the round trip, so editing two lines does not report the whole file as
+  changed at your next `git status`.
+- **A change on disk while the window is open is noticed.** With nothing unsaved it reloads
+  quietly. With unsaved edits it says so and offers **Keep mine** or **Load theirs**, telling you
+  what each version counts. Nothing is overwritten without you choosing it.
+- **Nothing saves on its own.** There is no autosave and no save on exit — closing NightShift with
+  unsaved plan edits asks first.
+
+**Edit with Claude…** opens a real Claude session in plan mode, in the project directory, so you
+can work on the plan conversationally. It is not a NightShift run: it takes no run gate, records no
+history row, and consumes no quota that NightShift tracks. If a run is already working in the
+project it warns you first, because two Claudes editing one file is how work disappears.
+
 ---
 
 ## When usage detection breaks
