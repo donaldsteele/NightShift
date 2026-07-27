@@ -1136,6 +1136,100 @@ Single-instance enforcement via a named `Mutex`; a second launch surfaces the ex
       a SHA256 for the binary.
 - **Acceptance:** a fresh clone builds, tests pass, publish produces a working single exe.
 
+### Phase 7 — The plan window (delivered 2026-07-27, `v0.4.0`)
+
+Added after `v0.3.0`, from using the app: the Project card printed `12 of 30 items complete` and
+gave you no way to look at what it was counting. The only route to the file was the preflight
+"Open the plan file" fix, which shells out to the OS — and that pill is only offered when the plan
+has zero items or zero remaining, so on a healthy plan the plan could not be opened from inside
+the app at all.
+
+- [x] **`MarkdownLines` — one fence rule, shared.** `PlanParser.ContentLines` is lifted into
+      `NightShift.Core.Markdown` and both readers consume it. They have to share it: a window
+      rendering thirty checkboxes beside a card reading "28 items complete" is the app
+      contradicting itself on one screen, and the user has no way to tell which half is lying.
+      Every quirk is preserved deliberately — fence character unmatched, fence length ignored, an
+      unclosed fence swallowing the rest of the file. All three differ from CommonMark, and
+      tightening any of them changes what the dashboard counts, so it would be a change to the
+      product rather than a bug fix. `PlanParserTests` passes **unmodified**, which is the whole
+      safety argument for touching it.
+- [x] **`MarkdownDocument` + `MarkdownReader`.** Blocks and inlines, immutable, BCL-only, parsed
+      off the UI thread. Hand-rolled rather than taken as a dependency for two reasons: no free
+      stable markdown renderer targets Avalonia 12 (`Markdown.Avalonia` is alpha on its 12.x line;
+      `Avalonia.Controls.Markdown` is the paid Avalonia Pro tier), and neither knows this app's
+      vocabulary. `- [!]` is NightShift's own invention and `— **delivered 2026-07-27**` is a fact
+      the tally already counts; a general renderer prints both as literal text. Here they are
+      `TaskMark.Blocked` and `MilestoneMarker.Delivered`, read through `PlanParser`'s own
+      `CheckboxPattern`, `MilestoneHeadingPattern` and marker constants.
+      **Non-goals, each with a reason, stated in the file's own docs:** raw HTML (every `<…>` in
+      both real corpora sits inside a backtick span — interpreting tags would eat that content);
+      setext headings (CommonMark makes a `---` after a paragraph an H2, and these plans use
+      standalone `---` as a section rule a dozen times per file and never use setext); four-space
+      indented code blocks (they collide with the two-to-four space indentation these plans use for
+      nested list items); reference-style links (`[label]:` is one bracket away from `- [x]`);
+      footnotes, entity escapes, autolinks, lazy continuation, and quotes nested past one level.
+      Anything unrecognised falls through as literal text — the right failure mode for a document
+      whose bytes the user is about to edit.
+- [x] **`PilotSettings.ResolvePlanPath`.** The repo had no shared plan-path helper;
+      `Path.Combine(projectDirectory, planFileName)` appeared twice, both in `PreflightChecker`.
+      The window is the third caller and the first writer. It also fixed something dead: the
+      `try/catch (ArgumentException)` it replaced had stopped catching anything when .NET Core
+      dropped `Path.Combine`'s invalid-character check, so the check is now explicit and tested.
+- [x] **`AtomicFile` gains an encoding overload, and `TextFileShape` captures the rest.** A latent
+      bug the editor would otherwise have shipped: `File.ReadAllTextAsync` detects and strips a
+      byte-order mark while `AtomicFile` always wrote UTF-8 without one, so a BOM'd plan lost three
+      bytes on its first save. `TextFileShape` adds line endings and the trailing newline —
+      `.gitattributes` here is `* text=auto`, so on Windows the working tree is CRLF while a text
+      box normalises everything to LF. Without it, editing two lines reports every line in the file
+      as changed at the next `git status`. None of this is visible on screen, which is why it is
+      pinned by a byte-equality test rather than by an eye.
+      `CreatePlanFileAsync` moved to `AtomicFile` in the same pass — it was the last plain
+      `File.WriteAllTextAsync` in Core, and one non-atomic writer beside an atomic one is a latent
+      bug now that two code paths write this file.
+- [x] **`IClaudeTerminalLauncher`**, extracted from `TerminalClaudeRunner`'s private `TryLaunch`.
+      It takes the permission mode as a **string**, which is the whole point — see the §5.3.3
+      refinement. The `Func<ProcessStartInfo, bool>` seam moves across intact, so
+      `TerminalClaudeRunnerTests` passes untouched. It also gives
+      `ProcessArguments.HasCommandShellHazard` its first production caller: the helper was written,
+      tested, and then never wired up, so the `cmd /k` line was hand-concatenated without consulting
+      it.
+- [x] **`Controls/MarkdownView`**, built in code rather than XAML. The structure is recursive and
+      heterogeneous — a quote holds blocks, a list item holds blocks, a table cell holds inlines —
+      and nine nested templates would each need an `x:DataType` under
+      `AvaloniaUseCompiledBindingsByDefault`. There is nothing to bind: the model is immutable and
+      the tree is rebuilt whole. Everything visual reuses `App.axaml`'s vocabulary, so a plan looks
+      like part of this app rather than a browser embedded in it.
+- [x] **The card's plan block is a `Button`.** Not a `PointerPressed` handler — a button is
+      tab-stoppable and Space/Enter-activatable for free, which is the entire keyboard story. The
+      "⋯" flyout carries the same command for when there is no tally to click on yet.
+- [x] **`PlanWindow` — separate, non-modal, and deliberately unowned.** Closing the main window can
+      mean "hide to tray", and on Win32 hiding an owner hides everything it owns, so an owned plan
+      window would vanish and `ShowMainWindow` would not bring it back. The presenter hides and
+      shows it explicitly. One window and one `PlanDocumentViewModel`, both singletons: there is one
+      project and one plan, so a second window would only be a second unsaved buffer to reconcile.
+- [x] **Explicit save, never autosave.** Settings debounce-save because they are small and
+      reversible; a plan is a document a background run is also writing to. `Ctrl+S` saves; `Esc`
+      closes when clean and asks when dirty. Shutdown *offers* to save rather than saving — silently
+      writing over what a run just committed is the one outcome nobody could undo. A successful save
+      re-runs preflight so the card's counts move immediately, skipped while a run is live because
+      preflight reads the same file and `CycleCompleted` re-runs it anyway.
+- [x] **`IFileWatcher` — the first `FileSystemWatcher` in this repo.** It watches the *directory*
+      filtered to the file name, never the file: a watcher bound to a file stops reporting the
+      moment that file is replaced by a rename, which is exactly how `AtomicFile` writes and exactly
+      what `git checkout` does. Debounced 400 ms on a `TimeProvider` timer, re-armed per event, in
+      the shape `SettingsViewModel.ScheduleSave` already uses — writers emit bursts, and
+      `AtomicFile`'s temp-write-then-rename is two events by itself. Our own save coming back
+      through the watcher is recognised **by content**, not by a suppression window, which makes it
+      exact rather than a race.
+- [x] **A conflict is a question, not an action.** Clean buffer reloads silently; unsaved edits
+      raise an inline notice with **Keep mine** / **Load theirs** and what each version counts.
+      Never a modal: the change usually arrives mid-run, and a modal would trap the user in this
+      window and away from the dashboard that explains why.
+- [x] **"Edit with Claude"** — an attended plan-mode session. See the §5.3.3 refinement for why
+      that is not a breach of "never plan mode", and the §9.1 refinement for what it does.
+- **Acceptance:** the plan opens from the card, renders both real corpora correctly, round-trips
+  byte-for-byte, and a change on disk during an edit never silently wins.
+
 ---
 
 ## 11. Risks and standing decisions
@@ -1210,3 +1304,33 @@ Single-instance enforcement via a named `Mutex`; a second launch surfaces the ex
 - [x] Terminal mode opens a real Windows Terminal window in the project directory with no trust
       prompt, and writes `.nightshift/next-prompt.txt`. (Not in the original checklist; it had never
       been exercised live.)
+- [x] **The plan reader agrees with the tally on both real corpora**, not just on fixtures.
+      TrestleBoard's 1350-line milestone plan parses in 44 ms — 58 headings, 16 milestones, 6 with
+      an explicit delivered marker, 13 task items against a tally of 13. This repo's own 1213-line
+      checkbox plan parses in 36 ms — 40 headings, 19 block quotes, 10 fences, 65 task items
+      against a tally of 65. Both agree exactly, including that the example checkboxes inside a
+      fence are counted by neither.
+- [x] **A plan file survives an unedited round trip byte for byte**, across CRLF, LF, a byte-order
+      mark, and a file with no trailing newline; and editing one line of a CRLF file changes only
+      that line.
+- [x] **The "Edit with Claude" seed prompt is free of everything `cmd.exe` reinterprets**
+      (`%`, `!`, `"`, CR, LF), asserted for both plan formats. Without this a future rewording
+      would silently break the launch: the launcher drops a hazardous prompt rather than mangling
+      it, so the session would open bare with no visible failure. The literal `- [!]` marker text
+      goes to the clipboard, where nothing reinterprets it.
+- [ ] **The plan window has not been driven by a person yet.** Everything above is machine-checked
+      and the renderer itself has no test — there is no `Avalonia.Headless` in this repo, and
+      adding it is a larger decision than this feature. Open it against both corpora and look at
+      the milestone pills, the tables, the block quotes and the `- [!]` marks.
+
+**Two deliberate deviations from the specification, recorded so neither reads as an oversight.**
+`MilestoneMarker` has no `InProgress` member: nothing in a heading can produce one, and a value no
+code path can reach invites a dead branch. `MarkdownLine` carries an `IsDelimiter` flag the spec's
+three-field record omitted; without it the reader has to re-implement the delimiter test, which
+duplicates the exact quirk the shared walk exists to centralise.
+
+**One thing knowingly not done.** `ResolvePlanPath` does not assert that the resolved path stays
+inside the project directory. Nothing stops `PlanFileName` being `..\..\elsewhere.md`, and the
+window will now write there. It is the user's own setting on their own machine rather than a
+privilege boundary, so this is a decision rather than a hole — but it is the one place where
+gaining a writer changed the stakes of an existing setting.
