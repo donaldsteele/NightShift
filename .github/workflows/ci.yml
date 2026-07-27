@@ -37,7 +37,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-results
           path: artifacts/test-results
@@ -72,7 +72,7 @@ jobs:
           if ($mb -gt 60) { throw "Published exe grew to $mb MB; expected roughly 33 MB." }
 
       - name: Upload the executable
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: NightShift-win-x64
           path: artifacts/publish/NightShift.Desktop.exe
