@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using NightShift.Core.Configuration;
 using NightShift.Core.Execution;
 using NightShift.Core.History;
@@ -73,6 +74,12 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IPreflightProcessRunner, PreflightProcessRunner>();
         services.AddSingleton<PreflightChecker>();
         services.AddSingleton<IPreflightChecker>(sp => sp.GetRequiredService<PreflightChecker>());
+
+        // Explicit factory because ClaudeTerminalLauncher takes a bare ILogger, so that
+        // TerminalClaudeRunner can pass its own and keep one log category per launch.
+        services.AddSingleton<IClaudeTerminalLauncher>(sp =>
+            new ClaudeTerminalLauncher(
+                sp.GetRequiredService<ILoggerFactory>().CreateLogger<ClaudeTerminalLauncher>()));
 
         services.AddSingleton<HeadlessClaudeRunner>();
         services.AddSingleton<TerminalClaudeRunner>();

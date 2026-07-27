@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace NightShift.Core.Io;
 
 /// <summary>
@@ -11,13 +13,34 @@ public static class AtomicFile
     /// rename, not a cross-volume copy) and then replaces the destination in one operation.
     /// A crash mid-write leaves the previous file untouched.
     /// </summary>
+    /// <summary>
+    /// UTF-8 with no byte-order mark — byte-for-byte what <c>File.WriteAllTextAsync</c> writes when
+    /// given no encoding, which is what every caller here got before the overload below existed.
+    /// </summary>
+    static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
+
+    public static Task WriteAllTextAsync(
+        string path,
+        string contents,
+        CancellationToken cancellationToken = default) =>
+        WriteAllTextAsync(path, contents, Utf8NoBom, cancellationToken);
+
+    /// <inheritdoc cref="WriteAllTextAsync(string, string, CancellationToken)"/>
+    /// <param name="encoding">
+    /// What to write with, byte-order mark included if it has one. This overload exists because the
+    /// plan editor has to write a file back the way it found it: a plan saved with a BOM must keep
+    /// it, and silently dropping one turns a two-line edit into a whole-file diff in the user's
+    /// next commit.
+    /// </param>
     public static async Task WriteAllTextAsync(
         string path,
         string contents,
+        Encoding encoding,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         ArgumentNullException.ThrowIfNull(contents);
+        ArgumentNullException.ThrowIfNull(encoding);
 
         var fullPath = Path.GetFullPath(path);
         var directory = Path.GetDirectoryName(fullPath)
@@ -29,7 +52,8 @@ public static class AtomicFile
 
         try
         {
-            await File.WriteAllTextAsync(tempPath, contents, cancellationToken).ConfigureAwait(false);
+            await File.WriteAllTextAsync(tempPath, contents, encoding, cancellationToken)
+                .ConfigureAwait(false);
             File.Move(tempPath, fullPath, overwrite: true);
         }
         catch

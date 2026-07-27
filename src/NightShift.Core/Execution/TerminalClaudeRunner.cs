@@ -36,8 +36,6 @@ public sealed class TerminalClaudeRunner : IClaudeRunner
 
     public const string PromptFileName = "next-prompt.txt";
 
-    const string WindowsTerminal = "wt.exe";
-
     readonly IClaudeExecutableLocator _locator;
     readonly IPromptBuilder _promptBuilder;
     readonly AutoModeProbe _autoModeProbe;
@@ -46,7 +44,7 @@ public sealed class TerminalClaudeRunner : IClaudeRunner
     readonly IClipboard? _clipboard;
     readonly ILogger<TerminalClaudeRunner> _logger;
     readonly TimeProvider _timeProvider;
-    readonly Func<ProcessStartInfo, bool> _startProcess;
+    readonly IClaudeTerminalLauncher _launcher;
 
     public TerminalClaudeRunner(
         IClaudeExecutableLocator locator,
@@ -67,7 +65,11 @@ public sealed class TerminalClaudeRunner : IClaudeRunner
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _clipboard = clipboard;
         _timeProvider = timeProvider ?? TimeProvider.System;
-        _startProcess = startProcess ?? DefaultStart;
+
+        // The launcher is built here rather than injected so this constructor keeps the shape its
+        // tests already use: `startProcess` is still the seam, and it now reaches the extracted
+        // launcher instead of a private method.
+        _launcher = new ClaudeTerminalLauncher(_logger, startProcess);
     }
 
     public LaunchMode Mode => LaunchMode.VisibleTerminal;
@@ -208,50 +210,19 @@ public sealed class TerminalClaudeRunner : IClaudeRunner
         string projectDirectory,
         PermissionModeDecision decision,
         string? remoteControlName,
-        out string? error)
-    {
-        error = null;
-        var mode = decision.Effective.ToCliValue();
-        var remote = remoteControlName is null
-            ? string.Empty
-            : $" --remote-control {ProcessArguments.Quote(remoteControlName)}";
-
-        // Windows Terminal first, so the session lands in the shell the user actually uses.
-        var windowsTerminal = new ProcessStartInfo
-        {
-            FileName = WindowsTerminal,
-            UseShellExecute = true,
-            WorkingDirectory = projectDirectory,
-        };
-        windowsTerminal.ArgumentList.Add("-d");
-        windowsTerminal.ArgumentList.Add(projectDirectory);
-        windowsTerminal.ArgumentList.Add("cmd");
-        windowsTerminal.ArgumentList.Add("/k");
-        windowsTerminal.ArgumentList.Add($"{ProcessArguments.Quote(executablePath)} --permission-mode {mode}{remote}");
-
-        if (_startProcess(windowsTerminal))
-        {
-            return true;
-        }
-
-        _logger.LogInformation("Windows Terminal was not available; falling back to cmd.exe.");
-
-        var fallback = new ProcessStartInfo
-        {
-            FileName = ProcessArguments.CommandShellFileName,
-            UseShellExecute = true,
-            WorkingDirectory = projectDirectory,
-            Arguments = $"/k {ProcessArguments.Quote(executablePath)} --permission-mode {mode}{remote}",
-        };
-
-        if (_startProcess(fallback))
-        {
-            return true;
-        }
-
-        error = "Neither Windows Terminal nor cmd.exe could be started.";
-        return false;
-    }
+        out string? error) =>
+        _launcher.TryLaunch(
+            executablePath,
+            projectDirectory,
+            decision.Effective.ToCliValue(),
+            // No opening prompt: typing into a terminal is unreliable, so the prompt goes to the
+            // handoff file and the clipboard instead. The plan window's attended session is the
+            // caller that does pass one.
+            seedPrompt: null,
+            remoteControlName is null
+                ? null
+                : $"--remote-control {ProcessArguments.Quote(remoteControlName)}",
+            out error);
 
     static string DescribeLaunch(string executablePath, PilotSettings settings, PermissionModeDecision decision)
     {
@@ -262,20 +233,6 @@ public sealed class TerminalClaudeRunner : IClaudeRunner
 
         return $"{ProcessArguments.Quote(executablePath)} --permission-mode {decision.Effective.ToCliValue()}" +
                $"{remote} (cwd {settings.ProjectDirectory})";
-    }
-
-    bool DefaultStart(ProcessStartInfo startInfo)
-    {
-        try
-        {
-            using var process = Process.Start(startInfo);
-            return process is not null;
-        }
-        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
-        {
-            _logger.LogDebug(ex, "Could not start {FileName}.", startInfo.FileName);
-            return false;
-        }
     }
 
     async Task<RunRecord> FailAsync(RunRecord record, string reason)
