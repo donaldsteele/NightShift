@@ -53,10 +53,21 @@ public static partial class PlanParser
     /// Which convention a plan file uses.
     /// </summary>
     /// <remarks>
-    /// Checkboxes win: this repo's own plan.md has both <c>## Phase 3</c> headings and checkboxes, and
-    /// the checkboxes are the thing that moves. A file with neither is reported as
-    /// <see cref="PlanFormat.Checkbox"/> so it produces today's "no <c>- [ ]</c> checkboxes" warning
-    /// rather than a new and less familiar one.
+    /// <para>
+    /// A file with no <c>M&lt;n&gt;</c> headings at all is a checkbox plan, and that is the ordinary
+    /// case — this repo's own plan.md is one. A file with neither is reported as
+    /// <see cref="PlanFormat.Checkbox"/> too, so it produces the familiar "no <c>- [ ]</c> checkboxes"
+    /// warning rather than a new and less familiar one.
+    /// </para>
+    /// <para>
+    /// <b>When a file has both, checkboxes win only while they still represent work</b> — that is,
+    /// while at least one unticked <c>- [ ]</c> remains. A milestone plan routinely ends with a
+    /// residual list of <c>- [x]</c> and <c>- [!]</c> open items that nobody intends as the unit of
+    /// progress, and first-match-wins detection read a fully delivered 16-milestone plan as "4 of 13
+    /// items complete". Worse than the tally: the resolved format is pinned onto the settings the
+    /// runner receives (<c>PilotScheduler</c>), so a misdetection also hands the run checkbox
+    /// conventions for a milestone plan.
+    /// </para>
     /// </remarks>
     public static PlanFormat Detect(string? planText)
     {
@@ -69,9 +80,17 @@ public static partial class PlanParser
 
         foreach (var line in ContentLines(planText))
         {
-            if (CheckboxPattern().IsMatch(line))
+            var checkbox = CheckboxPattern().Match(line);
+            if (checkbox.Success)
             {
-                return PlanFormat.Checkbox;
+                // Live work in checkbox form settles it, whatever else the file contains. A ticked or
+                // blocked one is only a record of work, so it decides nothing on its own.
+                if (checkbox.Groups["mark"].ValueSpan[0] == ' ')
+                {
+                    return PlanFormat.Checkbox;
+                }
+
+                continue;
             }
 
             if (!sawMilestone && MilestoneHeadingPattern().IsMatch(line))

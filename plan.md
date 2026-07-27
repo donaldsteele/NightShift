@@ -818,6 +818,17 @@ string never reaches the sink.
 > token. Detection prefers checkboxes when a file has both — this repo's own plan.md is exactly
 > that shape. Fenced blocks are skipped in both, for the reason the checkbox counter already gives.
 >
+> **Correction (2026-07-27): "checkboxes win" was too eager, and the rationale was wrong.** The rule
+> returned `Checkbox` on the *first* checkbox anywhere in the file, and it was justified by this
+> repo's own plan.md — which has no `M<n>` headings at all and so never reached the tie-break. The
+> shape it actually broke is the opposite one: a delivered milestone plan that ends with a residual
+> list of `- [x]` / `- [!]` open items. A real 16-milestone plan, every milestone delivered, read as
+> "4 of 13 items complete, 9 blocked" — and because `PilotScheduler` pins the resolved format onto
+> the settings the runner receives, the run was also handed checkbox conventions for a milestone
+> plan. **Only an unticked `- [ ]` now settles it**: ticked and blocked boxes are a record of work,
+> not work. A fully ticked checkbox plan with no milestone headings still reads as `Checkbox`, so the
+> familiar "every checkbox is already ticked" warning is unchanged.
+>
 > **Everything numbered below the highest delivered milestone counts as delivered.** Plans start
 > marking milestones only once shipping begins, so the early ones carry no marker and a literal
 > reading calls a nearly finished project barely started. An explicit `**Blocked:**` beats the

@@ -225,7 +225,7 @@ Settings save automatically a moment after you stop typing. There is no OK/Cance
 | **Grace period after a reset** | 1 min (0–60) | Firing exactly on the boundary races the server's clock and reads the window that is about to close. |
 | **Threshold** | 90% (50–100) | Run only if the selected metric is *strictly below* this. At 89 it runs; at 90 and 91 it skips. |
 | **Compare the threshold against** | Highest of all | `max(5h, 7d, 7d-opus, 7d-sonnet)`. The safe choice — it will not start a run that immediately burns the weekly cap. `Session 5h` and `Weekly 7d` narrow it to one window. The dashboard's *Gate metric* line shows the resulting figure **and which window it came from**, because only the 5h and 7d windows have gauges. |
-| **How the plan states what is left to do** | Detect automatically | Checkbox or milestone (see [Plan formats](#plan-formats)). Detection prefers checkboxes when a plan has both. Set it explicitly if a plan uses a convention detection reads the other way. |
+| **How the plan states what is left to do** | Detect automatically | Checkbox or milestone (see [Plan formats](#plan-formats)). When a plan has both, checkboxes win only while one is still unticked. Set it explicitly if a plan uses a convention detection reads the other way. |
 | **When no usage figure can be read** | Skip the cycle | The other option is *Run*. Skipping is the safe default: silently burning quota because a scrape broke is the worst failure mode this app has. |
 | **Permission mode** | `auto` | Falls back to `acceptEdits` automatically if `auto` is unavailable on your account. `bypassPermissions` is a deliberate third rung with no classifier. |
 | **Launch mode** | Headless (logged) | *Visible terminal* opens a real interactive window in the project directory and copies the prompt to the clipboard, but the app cannot capture output; those runs record as `Launched` with no transcript. |
@@ -309,9 +309,12 @@ Two rules are worth knowing:
 - **The heading must carry an `M<number>` token** (`## M0` … `###### M15`). That is what keeps
   ordinary headings like `### Sizing & sequencing notes` from being counted as milestones.
 
-Detection prefers checkboxes when a file has both — this repository's own `plan.md` has `## Phase`
-headings *and* checkboxes, and the checkboxes are the thing that moves. Fenced code blocks are
-skipped in both formats, so a plan documenting its own conventions does not count its examples.
+When a file has both, **checkboxes win only while one is still unticked** — while `- [ ]` is the
+thing that moves. A finished milestone plan routinely ends with a residual list of `- [x]` and
+`- [!]` open items nobody intends as the unit of progress, and counting those instead reads a fully
+delivered 16-milestone plan as "4 of 13 items complete". Ticked and blocked checkboxes are a record
+of work, so they do not decide the format on their own. Fenced code blocks are skipped in both
+formats, so a plan documenting its own conventions does not count its examples.
 Override the detection in **Settings › Project › How the plan states what is left to do**.
 
 ---

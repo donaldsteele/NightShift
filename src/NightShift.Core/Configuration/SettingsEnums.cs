@@ -33,8 +33,10 @@ public enum UsageMetric
 public enum PlanFormat
 {
     /// <summary>
-    /// Work it out from the file. Default: any checkbox wins, otherwise any milestone heading, and a
-    /// file with neither is treated as an empty checkbox plan — which is what it looks like.
+    /// Work it out from the file. Default: an unticked <c>- [ ]</c> wins, otherwise any milestone
+    /// heading, and a file with neither is treated as an empty checkbox plan — which is what it looks
+    /// like. Ticked and blocked checkboxes do not settle it on their own, because a delivered
+    /// milestone plan often ends with a residual list of them.
     /// </summary>
     Auto,
 

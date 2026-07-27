@@ -44,9 +44,8 @@ public sealed class PlanParserTests
         Assert.Equal(PlanFormat.Milestone, PlanParser.Detect(MilestonePlan));
 
     [Fact]
-    public void Checkboxes_win_when_a_plan_has_both()
+    public void Checkboxes_win_when_a_plan_has_both_and_one_is_still_unticked()
     {
-        // This repo's own plan.md is exactly this shape: `## Phase 3` headings plus checkboxes.
         const string Both = """
             ## M1 — a milestone heading
 
@@ -56,6 +55,45 @@ public sealed class PlanParserTests
             """;
 
         Assert.Equal(PlanFormat.Checkbox, PlanParser.Detect(Both));
+    }
+
+    // The shape that made a finished 16-milestone plan read as "4 of 13 items complete": every
+    // milestone delivered, and a tail list of open items nobody intends as the unit of progress.
+    // Ticked and blocked checkboxes are a record of work, not work — so they do not settle the format.
+    [Fact]
+    public void Milestones_win_when_the_only_checkboxes_left_are_ticked_or_blocked()
+    {
+        const string DeliveredWithLeftovers = """
+            ## 11. Milestones
+
+            ### M0 — Scaffold (S) — **delivered 2026-07-26**
+            **Status:** implemented.
+
+            ### M1 — Everything else (L) — **delivered 2026-07-27**
+            **Status:** implemented.
+
+            ## 12. What is left
+
+            - [x] a cosmetic defect, since fixed
+            - [!] needs a person with a screen reader
+            """;
+
+        var result = PlanParser.Parse(DeliveredWithLeftovers);
+
+        Assert.Equal(PlanFormat.Milestone, result.Format);
+        Assert.Equal(new PlanItemCounts(2, 0, 0, PlanFormat.Milestone), result.Counts);
+    }
+
+    // A checkbox plan that happens to be finished stays a checkbox plan: with no milestone headings
+    // there is nothing to switch to, and the "every checkbox is already ticked" warning is the useful
+    // one.
+    [Fact]
+    public void A_fully_ticked_checkbox_plan_with_no_milestones_stays_a_checkbox_plan()
+    {
+        var result = PlanParser.Parse("## Phase 0\n\n- [x] done\n- [!] blocked\n");
+
+        Assert.Equal(PlanFormat.Checkbox, result.Format);
+        Assert.Equal(new PlanItemCounts(1, 0, 1), result.Counts);
     }
 
     [Fact]
