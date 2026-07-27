@@ -531,6 +531,39 @@ so the window doesn't open on a trust prompt, and launch with the same permissio
 
 Make the mode a per-project setting with a radio group in the UI, exactly as specified.
 
+### 5.6 Remote Control
+
+Optional: start the launched session with Claude Code's Remote Control enabled, named after the
+repository, so it can be driven from another device.
+
+```
+claude --permission-mode auto --remote-control <repository-name>
+```
+
+> **Visible-terminal mode only, and this is not negotiable.** Measured against Claude Code 2.1.220
+> on 2026-07-27:
+>
+> - `claude -p "…" --remote-control <name>` **exits 0 and silently ignores the flag.** No error, and
+>   no remote-control field anywhere in the `system/init` event — the same "accepted, did nothing"
+>   shape as the unnamespaced `/caveman` failure in §5.2.
+> - The flag's own help says it "starts an interactive session", and an interactive session needs a
+>   real terminal: with stdin redirected, the CLI falls back to `--print` and refuses to start at all
+>   (*"Input must be provided either through stdin or as a prompt argument when using --print"*).
+>
+> So NightShift **does not pass the flag to headless runs**. Passing a flag that looks like it worked
+> is worse than not offering the feature. Instead:
+> - `TerminalClaudeRunner` appends `--remote-control <name>` (both the `wt.exe` and `cmd /k` paths);
+> - `HeadlessClaudeRunner` logs a warning when the setting is on;
+> - `PreflightChecker` raises a **warning** pill — never an error, the run itself is fine;
+> - Settings shows an inline note when the box is ticked while the launch mode is Headless.
+
+**The session name** comes from `RepositoryName.Resolve`: the last segment of the `origin` remote in
+`.git/config` (handling `https://host/owner/repo.git` and `git@host:owner/repo.git`), falling back to
+the directory name. It reads `.git/config` directly rather than shelling out to `git` — no process to
+spawn, nothing to time out, and it still works when git is not installed. The result is sanitised to
+letters, digits, dash, underscore and dot, capped at 64 characters, because directory names with
+spaces are ordinary on Windows. `RemoteControlName` overrides it entirely.
+
 ---
 
 ## 6. Scheduling

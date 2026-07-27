@@ -57,6 +57,7 @@ public sealed partial class SettingsViewModel : ViewModelBase, IDisposable
         nameof(MaxRunDurationMinutes), nameof(StallTimeoutMinutes),
         nameof(PermissionMode), nameof(AutoTrustProjectFolder), nameof(AllowedTools),
         nameof(SkipPermissionsFallback),
+        nameof(EnableRemoteControl), nameof(RemoteControlName),
         nameof(CavemanLevel), nameof(PromptTemplate),
         nameof(UsageProviderOrder), nameof(CcusageCommandOverride), nameof(DryRun),
         nameof(HistoryRetentionCount),
@@ -240,6 +241,8 @@ public sealed partial class SettingsViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsHeadless))]
     [NotifyPropertyChangedFor(nameof(IsVisibleTerminal))]
+    // Switching launch mode is what makes a ticked remote-control box effective or not.
+    [NotifyPropertyChangedFor(nameof(IsRemoteControlIneffective))]
     public partial LaunchMode LaunchMode { get; set; } = LaunchMode.Headless;
 
     /// <summary>Radio-button binding for <see cref="Core.Configuration.LaunchMode.Headless"/>.</summary>
@@ -320,6 +323,46 @@ public sealed partial class SettingsViewModel : ViewModelBase, IDisposable
 
     [ObservableProperty]
     public partial bool SkipPermissionsFallback { get; set; }
+
+    /// <summary>
+    /// Start the session with Claude Code's Remote Control enabled (plan.md §5.5).
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsRemoteControlIneffective))]
+    [NotifyPropertyChangedFor(nameof(RemoteControlPreview))]
+    public partial bool EnableRemoteControl { get; set; }
+
+    /// <summary>Empty means "name it after the repository".</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(RemoteControlPreview))]
+    public partial string RemoteControlName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// True when remote control is switched on but the launch mode cannot deliver it. Claude Code
+    /// accepts <c>--remote-control</c> in headless mode and silently ignores it, so the UI has to
+    /// say so rather than let the ticked box imply it is working.
+    /// </summary>
+    public bool IsRemoteControlIneffective => EnableRemoteControl && LaunchMode == LaunchMode.Headless;
+
+    /// <summary>The session name a run would actually use, for display beside the setting.</summary>
+    public string RemoteControlPreview
+    {
+        get
+        {
+            if (!EnableRemoteControl)
+            {
+                return string.Empty;
+            }
+
+            var name = RemoteControlName is { Length: > 0 } chosen
+                ? chosen
+                : Core.Execution.RepositoryName.Resolve(ProjectDirectory);
+
+            return name is null
+                ? "No session name could be derived from the project directory."
+                : $"Session name: {name}";
+        }
+    }
 
     /// <summary>
     /// Read-only list of every <c>permissions.ask</c> rule and interactive MCP server found, with
@@ -685,6 +728,8 @@ public sealed partial class SettingsViewModel : ViewModelBase, IDisposable
         AutoTrustProjectFolder = AutoTrustProjectFolder,
         AllowedTools = AllowedTools,
         SkipPermissionsFallback = SkipPermissionsFallback,
+        EnableRemoteControl = EnableRemoteControl,
+        RemoteControlName = RemoteControlName,
         CavemanLevel = CavemanLevel,
         PromptTemplate = PromptTemplate,
         UsageProviderOrder = UsageProviderOrder,
@@ -722,6 +767,8 @@ public sealed partial class SettingsViewModel : ViewModelBase, IDisposable
             AutoTrustProjectFolder = normalized.AutoTrustProjectFolder;
             AllowedTools = normalized.AllowedTools;
             SkipPermissionsFallback = normalized.SkipPermissionsFallback;
+            EnableRemoteControl = normalized.EnableRemoteControl;
+            RemoteControlName = normalized.RemoteControlName;
             CavemanLevel = normalized.CavemanLevel;
             PromptTemplate = normalized.PromptTemplate;
             UsageProviderOrder = normalized.UsageProviderOrder;

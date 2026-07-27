@@ -129,7 +129,13 @@ public sealed class TerminalClaudeRunner : IClaudeRunner
             return dryRun;
         }
 
-        if (!TryLaunch(resolution.ExecutablePath, settings.ProjectDirectory, decision, out var launchError))
+        var remoteControlName = ResolveRemoteControlName(settings);
+        if (remoteControlName is not null)
+        {
+            _logger.LogInformation("Remote Control will be enabled as '{Name}'.", remoteControlName);
+        }
+
+        if (!TryLaunch(resolution.ExecutablePath, settings.ProjectDirectory, decision, remoteControlName, out var launchError))
         {
             return await FailAsync(record, launchError ?? "Could not open a terminal.").ConfigureAwait(false);
         }
@@ -181,14 +187,34 @@ public sealed class TerminalClaudeRunner : IClaudeRunner
         return new TerminalHandoff(path, copied);
     }
 
+    /// <summary>
+    /// The Remote Control session name, or null when the feature is off. Explicit name wins;
+    /// otherwise it is derived from the repository (plan.md §5.5).
+    /// </summary>
+    static string? ResolveRemoteControlName(PilotSettings settings)
+    {
+        if (!settings.EnableRemoteControl)
+        {
+            return null;
+        }
+
+        return settings.RemoteControlName is { Length: > 0 } explicitName
+            ? explicitName
+            : RepositoryName.Resolve(settings.ProjectDirectory);
+    }
+
     bool TryLaunch(
         string executablePath,
         string projectDirectory,
         PermissionModeDecision decision,
+        string? remoteControlName,
         out string? error)
     {
         error = null;
         var mode = decision.Effective.ToCliValue();
+        var remote = remoteControlName is null
+            ? string.Empty
+            : $" --remote-control {ProcessArguments.Quote(remoteControlName)}";
 
         // Windows Terminal first, so the session lands in the shell the user actually uses.
         var windowsTerminal = new ProcessStartInfo
@@ -201,7 +227,7 @@ public sealed class TerminalClaudeRunner : IClaudeRunner
         windowsTerminal.ArgumentList.Add(projectDirectory);
         windowsTerminal.ArgumentList.Add("cmd");
         windowsTerminal.ArgumentList.Add("/k");
-        windowsTerminal.ArgumentList.Add($"{ProcessArguments.Quote(executablePath)} --permission-mode {mode}");
+        windowsTerminal.ArgumentList.Add($"{ProcessArguments.Quote(executablePath)} --permission-mode {mode}{remote}");
 
         if (_startProcess(windowsTerminal))
         {
@@ -215,7 +241,7 @@ public sealed class TerminalClaudeRunner : IClaudeRunner
             FileName = ProcessArguments.CommandShellFileName,
             UseShellExecute = true,
             WorkingDirectory = projectDirectory,
-            Arguments = $"/k {ProcessArguments.Quote(executablePath)} --permission-mode {mode}",
+            Arguments = $"/k {ProcessArguments.Quote(executablePath)} --permission-mode {mode}{remote}",
         };
 
         if (_startProcess(fallback))
@@ -227,9 +253,16 @@ public sealed class TerminalClaudeRunner : IClaudeRunner
         return false;
     }
 
-    static string DescribeLaunch(string executablePath, PilotSettings settings, PermissionModeDecision decision) =>
-        $"{ProcessArguments.Quote(executablePath)} --permission-mode {decision.Effective.ToCliValue()} " +
-        $"(cwd {settings.ProjectDirectory})";
+    static string DescribeLaunch(string executablePath, PilotSettings settings, PermissionModeDecision decision)
+    {
+        var remoteControlName = ResolveRemoteControlName(settings);
+        var remote = remoteControlName is null
+            ? string.Empty
+            : $" --remote-control {ProcessArguments.Quote(remoteControlName)}";
+
+        return $"{ProcessArguments.Quote(executablePath)} --permission-mode {decision.Effective.ToCliValue()}" +
+               $"{remote} (cwd {settings.ProjectDirectory})";
+    }
 
     bool DefaultStart(ProcessStartInfo startInfo)
     {

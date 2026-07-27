@@ -154,6 +154,77 @@ public sealed class TerminalClaudeRunnerTests : IDisposable
     }
 
     [Fact]
+    public async Task Remote_control_is_off_by_default()
+    {
+        await CreateRunner().RunAsync(Settings());
+
+        Assert.DoesNotContain("--remote-control", string.Join(" ", _started[0].ArgumentList), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Remote_control_names_the_session_after_the_repository()
+    {
+        Directory.CreateDirectory(Path.Combine(_project.Path, ".git"));
+        await File.WriteAllTextAsync(
+            Path.Combine(_project.Path, ".git", "config"),
+            """
+            [remote "origin"]
+            	url = https://github.com/donaldsteele/NightShift.git
+            """);
+
+        await CreateRunner().RunAsync(Settings(s => s.EnableRemoteControl = true));
+
+        Assert.Contains(
+            "--remote-control NightShift",
+            string.Join(" ", _started[0].ArgumentList),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task An_explicit_remote_control_name_wins()
+    {
+        await CreateRunner().RunAsync(Settings(s =>
+        {
+            s.EnableRemoteControl = true;
+            s.RemoteControlName = "chosen-name";
+        }));
+
+        Assert.Contains(
+            "--remote-control chosen-name",
+            string.Join(" ", _started[0].ArgumentList),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_remote_control_name_needing_quotes_is_quoted()
+    {
+        await CreateRunner().RunAsync(Settings(s =>
+        {
+            s.EnableRemoteControl = true;
+            s.RemoteControlName = "name with spaces";
+        }));
+
+        Assert.Contains(
+            "--remote-control \"name with spaces\"",
+            string.Join(" ", _started[0].ArgumentList),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task The_cmd_fallback_carries_remote_control_too()
+    {
+        _startBehaviour = info => info.FileName != "wt.exe";
+
+        await CreateRunner().RunAsync(Settings(s =>
+        {
+            s.EnableRemoteControl = true;
+            s.RemoteControlName = "fallback-name";
+        }));
+
+        Assert.Contains("--remote-control fallback-name", _started[1].Arguments, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Dry_run_writes_the_prompt_but_opens_nothing()
     {
         var record = await CreateRunner().RunAsync(Settings(s => s.DryRun = true));

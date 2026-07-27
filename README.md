@@ -237,6 +237,22 @@ pending resume, quota deadline), `logs/nightshift-*.log`, and `runs/` (an append
 button. Access tokens are redacted before anything reaches a log file, and there is a test asserting
 a token-shaped string never reaches the sink.
 
+### Remote control
+
+Optionally, a launched session can start with Claude Code's Remote Control enabled and named after
+the repository, so you can pick it up from another device. Turn it on in Settings > Autonomy; leave
+the name blank to use the repository name (taken from the `origin` remote, or the directory name).
+
+**It only works in visible-terminal launch mode.** In headless mode Claude Code accepts
+`--remote-control` and silently ignores it: exit 0, no error, and nothing about remote control in
+the session's `init` event. Rather than pass a flag that looks like it worked, NightShift does not
+pass it at all in headless mode, logs a warning, and shows an amber preflight pill plus a note in
+Settings. Switch the launch mode to **Visible terminal** to actually use it.
+
+Note the trade-off before switching: terminal runs are recorded as `Launched` and nothing more —
+no streamed output, no cost, no success or failure, no mid-run quota detection, and no stall
+detector, because NightShift cannot see inside a window it does not own.
+
 ### Run now, Force run, Stop run
 
 - **Run now** starts a cycle immediately but **still honours the usage check**.

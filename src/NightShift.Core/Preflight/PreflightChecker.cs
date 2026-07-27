@@ -63,6 +63,11 @@ public enum PreflightCheckId
 
     /// <summary>The working tree has no uncommitted changes.</summary>
     GitWorkingTree,
+
+    /// <summary>
+    /// Remote Control is switched on but the launch mode cannot deliver it (plan.md §5.5).
+    /// </summary>
+    RemoteControl,
 }
 
 /// <summary>
@@ -536,6 +541,33 @@ public sealed partial class PreflightChecker : IPreflightChecker
     public string PluginsDirectory { get; }
 
     /// <summary>Display name for a row, so the app never has to hard-code these strings.</summary>
+    /// <summary>
+    /// Remote Control only exists in an interactive session. Measured against Claude Code 2.1.220:
+    /// <c>--remote-control</c> in headless <c>-p</c> mode is accepted and then silently ignored, so
+    /// a user with the box ticked would otherwise believe it was on. Warning, not error — the run
+    /// itself is fine, it just will not be remotely controllable.
+    /// </summary>
+    static PreflightCheck CheckRemoteControl(PilotSettings settings)
+    {
+        if (settings.LaunchMode == LaunchMode.Headless)
+        {
+            return Warning(
+                PreflightCheckId.RemoteControl,
+                "Remote control is on but the launch mode is Headless, where Claude Code ignores it. " +
+                "Switch to Visible terminal to use it.");
+        }
+
+        var name = settings.RemoteControlName is { Length: > 0 } explicitName
+            ? explicitName
+            : Execution.RepositoryName.Resolve(settings.ProjectDirectory);
+
+        return name is null
+            ? Warning(
+                PreflightCheckId.RemoteControl,
+                "Remote control is on, but no session name could be derived from the project directory.")
+            : Ok(PreflightCheckId.RemoteControl, $"Remote control will be enabled as '{name}'.");
+    }
+
     public static string NameOf(PreflightCheckId id) => id switch
     {
         PreflightCheckId.ClaudeExecutable => "Claude CLI found",
@@ -550,6 +582,7 @@ public sealed partial class PreflightChecker : IPreflightChecker
         PreflightCheckId.PermissionsAsk => "No ask rules",
         PreflightCheckId.GitRepository => "Git repository",
         PreflightCheckId.GitWorkingTree => "Working tree clean",
+        PreflightCheckId.RemoteControl => "Remote control",
         _ => id.ToString(),
     };
 
@@ -622,6 +655,11 @@ public sealed partial class PreflightChecker : IPreflightChecker
             .ConfigureAwait(false);
         checks.Add(git.Repository);
         checks.Add(git.WorkingTree);
+
+        if (normalized.EnableRemoteControl)
+        {
+            checks.Add(CheckRemoteControl(normalized));
+        }
 
         var result = new PreflightResult(
             checks,

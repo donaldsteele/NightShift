@@ -344,6 +344,29 @@
               </StackPanel>
             </Border>
 
+            <!-- Remote control (plan.md §5.5). Interactive sessions only. -->
+            <StackPanel Spacing="6">
+              <CheckBox Content="Enable remote control when a run launches"
+                        IsChecked="{Binding EnableRemoteControl, Mode=TwoWay}" />
+              <TextBlock Classes="caption"
+                         Text="Starts the session with Claude Code's Remote Control on, so it can be driven from another device. The session is named after the repository unless you set a name below." />
+
+              <TextBox Classes="mono"
+                       IsVisible="{Binding EnableRemoteControl}"
+                       Text="{Binding RemoteControlName, Mode=TwoWay}"
+                       PlaceholderText="Leave empty to use the repository name" />
+
+              <TextBlock Classes="caption"
+                         IsVisible="{Binding EnableRemoteControl}"
+                         Text="{Binding RemoteControlPreview}" />
+
+              <Border Classes="notice" IsVisible="{Binding IsRemoteControlIneffective}">
+                <TextBlock Classes="caption"
+                           TextWrapping="Wrap"
+                           Text="Remote control needs Visible terminal mode. Your launch mode is Headless, where Claude Code accepts the option and silently ignores it, so it will not take effect." />
+              </Border>
+            </StackPanel>
+
             <!-- plan.md §9.2: the detected permissions.ask rules, and why they matter. -->
             <StackPanel Spacing="6" IsVisible="{Binding HasPermissionsAskRules}">
               <TextBlock Text="Detected permissions.ask rules" Classes="field" />

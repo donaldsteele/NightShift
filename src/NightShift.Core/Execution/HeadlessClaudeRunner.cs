@@ -109,6 +109,16 @@ public sealed class HeadlessClaudeRunner : IClaudeRunner
             }
         }
 
+        if (settings.EnableRemoteControl)
+        {
+            // Deliberately not passed. Claude Code accepts --remote-control in -p mode and ignores
+            // it: exit 0, no error, and nothing in system/init. Passing it would look like it
+            // worked. Preflight raises this as a warning too; this line is for the run log.
+            _logger.LogWarning(
+                "Remote Control is enabled but this is a headless run, where Claude Code ignores it. " +
+                "Switch the launch mode to Visible terminal to use Remote Control.");
+        }
+
         var prompt = _promptBuilder.Build(settings);
         var resumeInterrupted = PendingResumeSessionId is { Length: > 0 };
         if (resumeInterrupted)

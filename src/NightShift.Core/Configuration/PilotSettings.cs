@@ -142,6 +142,31 @@ public sealed record PilotSettings
     /// </summary>
     public bool SkipPermissionsFallback { get; set; }
 
+    /// <summary>
+    /// Start the launched session with Claude Code's Remote Control enabled, named after the
+    /// repository, so it can be driven from another device.
+    /// </summary>
+    /// <remarks>
+    /// <b>Visible-terminal mode only.</b> Measured against Claude Code 2.1.220 on 2026-07-27:
+    /// <c>--remote-control</c> is accepted in headless <c>-p</c> mode and then **silently ignored** —
+    /// exit 0, no error, and no remote-control field anywhere in the <c>system/init</c> event. The
+    /// flag's own help says it "starts an interactive session", and an interactive session needs a
+    /// real terminal; without a tty the CLI falls back to <c>--print</c> and refuses to start.
+    /// <para>
+    /// So NightShift does not pass the flag to headless runs at all. Passing a flag that looks like
+    /// it worked and did nothing is the same failure that made <c>/caveman</c> swallow a whole
+    /// prompt (§5.2). Preflight raises a warning instead when this is on and
+    /// <see cref="LaunchMode"/> is <see cref="LaunchMode.Headless"/>.
+    /// </para>
+    /// </remarks>
+    public bool EnableRemoteControl { get; set; }
+
+    /// <summary>
+    /// Overrides the Remote Control session name. Empty means derive it from the repository — the
+    /// <c>origin</c> remote's name, or the project directory name (see <c>RepositoryName</c>).
+    /// </summary>
+    public string RemoteControlName { get; set; } = string.Empty;
+
     // ── Prompt ─────────────────────────────────────────────────────────────────────────────────
 
     public CavemanLevel CavemanLevel { get; set; } = CavemanLevel.Full;
@@ -176,6 +201,7 @@ public sealed record PilotSettings
         QuotaResetGraceMinutes = Math.Clamp(QuotaResetGraceMinutes, 0, 60),
         MaxQuotaWaitHours = Math.Clamp(MaxQuotaWaitHours, 1, 72),
         AllowedTools = string.IsNullOrWhiteSpace(AllowedTools) ? DefaultAllowedTools : AllowedTools.Trim(),
+        RemoteControlName = RemoteControlName?.Trim() ?? string.Empty,
         PromptTemplate = string.IsNullOrWhiteSpace(PromptTemplate) ? DefaultPromptTemplate : PromptTemplate,
         HistoryRetentionCount = Math.Max(1, HistoryRetentionCount),
         Model = string.IsNullOrWhiteSpace(Model) ? null : Model.Trim(),

@@ -1002,4 +1002,51 @@ public sealed class PreflightCheckerTests : IDisposable
             return Task.FromResult(Responses.TryGetValue(joined, out var response) ? response : Default);
         }
     }
+    // ── Remote control (plan.md §5.5) ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Remote_control_is_not_checked_when_it_is_off()
+    {
+        var result = await _harness.CheckAsync();
+
+        Assert.Null(result.Find(PreflightCheckId.RemoteControl));
+    }
+
+    [Fact]
+    public async Task Remote_control_warns_when_the_launch_mode_cannot_deliver_it()
+    {
+        // Claude Code accepts --remote-control in headless mode and ignores it, so a ticked box
+        // would otherwise imply something that is not happening.
+        _harness.Settings = _harness.Settings with
+        {
+            EnableRemoteControl = true,
+            LaunchMode = LaunchMode.Headless,
+        };
+
+        var result = await _harness.CheckAsync();
+        var check = result.Find(PreflightCheckId.RemoteControl)!;
+
+        Assert.Equal(PreflightStatus.Warning, check.Status);
+        Assert.Contains("Visible terminal", check.Message, StringComparison.Ordinal);
+
+        // A warning must never block a run: the run itself is fine.
+        Assert.True(result.CanRun);
+    }
+
+    [Fact]
+    public async Task Remote_control_reports_the_session_name_in_terminal_mode()
+    {
+        _harness.Settings = _harness.Settings with
+        {
+            EnableRemoteControl = true,
+            LaunchMode = LaunchMode.VisibleTerminal,
+            RemoteControlName = "chosen-name",
+        };
+
+        var check = await _harness.CheckAsync(PreflightCheckId.RemoteControl);
+
+        Assert.Equal(PreflightStatus.Ok, check.Status);
+        Assert.Contains("chosen-name", check.Message, StringComparison.Ordinal);
+    }
+
 }
